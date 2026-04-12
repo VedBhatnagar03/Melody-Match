@@ -283,67 +283,85 @@ function mrRenderTakes() {
 
   // Dots
   dots.innerHTML = '';
-  mrTakes.forEach((take, i) => {
+  const totalTabs = mrTakes.length > 1 ? mrTakes.length + 1 : mrTakes.length;
+  for (let i = 0; i < totalTabs; i++) {
+    const isMerged = i === mrTakes.length;
     const d = document.createElement('div');
-    d.className = 'mr-take-dot' + (i === mrActiveTake ? ' active' : '');
-    d.title = take.label;
+    const active = (mrActiveTake === 'merged' && isMerged) || (mrActiveTake === i && !isMerged);
+    d.className = 'mr-take-dot' + (active ? ' active' : '');
+    d.title = isMerged ? 'Merged Take' : mrTakes[i].label;
     d.style.marginRight = '4px';
     dots.appendChild(d);
-  });
+  }
 
   // Thumbnails
   thumbs.innerHTML = '';
-  mrTakes.forEach((take, i) => {
+  const renderThumb = (takeData, i, isMerged) => {
     const thumb = document.createElement('div');
-    thumb.className = 'mr-take-thumb' + (i === mrActiveTake ? ' selected' : '');
+    const isSelected = isMerged ? (mrActiveTake === 'merged') : (mrActiveTake === i);
+    thumb.className = 'mr-take-thumb' + (isSelected ? ' selected' : '');
     thumb.innerHTML = `
-      <div class="mr-take-thumb-label">${take.label}</div>
+      <div class="mr-take-thumb-label">${isMerged ? 'Merged Take ✨' : takeData.label}</div>
       <canvas width="200" height="32"></canvas>
-      <div class="mr-take-thumb-info">${take.notes.length} notes · ${take.bpm} bpm</div>
-      <button class="mr-take-del" data-idx="${i}" title="remove take">✕</button>
+      <div class="mr-take-thumb-info">${takeData.notes.length} notes · ${takeData.bpm} bpm</div>
+      ${!isMerged ? `<button class="mr-take-del" data-idx="${i}" title="remove take">✕</button>` : ''}
     `;
     thumb.addEventListener('click', e => {
-      if (e.target.closest('.mr-take-del')) return;
-      mrActiveTake = i;
-      mrSequence   = mrTakes.length > 1 ? mrMergeTakes(mrTakes) : mrTakes[0].notes.map(n => ({ ...n }));
+      if (!isMerged && e.target.closest('.mr-take-del')) return;
+      mrActiveTake = isMerged ? 'merged' : i;
+      mrSequence = isMerged ? mrMergeTakes(mrTakes) : mrTakes[i].notes.map(n => ({ ...n }));
       mrRenderTakes();
-      mrDrawRoll(i);
+      mrDrawRoll((isMerged || mrActiveTake === 'merged') ? null : i); // no faint highlighting on merged
       mrUpdateUI();
     });
-    const delBtn = thumb.querySelector('.mr-take-del');
-    delBtn.addEventListener('click', e => {
-      e.stopPropagation();
-      mrTakes.splice(i, 1);
-      if (mrActiveTake >= mrTakes.length) mrActiveTake = Math.max(0, mrTakes.length - 1);
-      if (mrTakes.length > 0) {
-        mrSequence = mrTakes.length > 1 ? mrMergeTakes(mrTakes) : mrTakes[0].notes.map(n => ({ ...n }));
-      } else {
-        mrSequence = [];
-      }
-      mrRenderTakes();
-      mrDrawRoll();
-      mrUpdateUI();
-    });
+    
+    if (!isMerged) {
+      const delBtn = thumb.querySelector('.mr-take-del');
+      delBtn.addEventListener('click', e => {
+        e.stopPropagation();
+        mrTakes.splice(i, 1);
+        if (mrTakes.length <= 1) mrActiveTake = 0;
+        else if (mrActiveTake === i) mrActiveTake = Math.max(0, i - 1);
+        else if (mrActiveTake > i && mrActiveTake !== 'merged') mrActiveTake--;
+        
+        if (mrTakes.length > 0) {
+          mrSequence = mrActiveTake === 'merged' ? mrMergeTakes(mrTakes) : mrTakes[mrActiveTake].notes.map(n => ({ ...n }));
+        } else {
+          mrSequence = [];
+        }
+        mrRenderTakes();
+        mrDrawRoll();
+        mrUpdateUI();
+      });
+    }
     thumbs.appendChild(thumb);
 
-    // Draw mini thumbnail of this take
+    // Draw mini thumbnail
     const c = thumb.querySelector('canvas');
     const cc = c.getContext('2d');
     const W = c.width, H = c.height;
     const beats = mrTotalBeats();
     cc.fillStyle = '#111827';
     cc.fillRect(0, 0, W, H);
-    const midis = take.notes.map(n => n.midi);
+    if(takeData.notes.length === 0) return;
+    const midis = takeData.notes.map(n => n.midi);
     const loM = Math.min(...midis) - 2, hiM = Math.max(...midis) + 2;
     const pitchRange = Math.max(1, hiM - loM);
-    take.notes.forEach(note => {
+    takeData.notes.forEach(note => {
       const x  = (note.beat / beats) * W;
       const nw = Math.max(2, (note.dur  / beats) * W - 1);
       const ny = ((hiM - note.midi) / pitchRange) * (H - 4) + 2;
-      cc.fillStyle = i === mrActiveTake ? '#00d4ff' : 'rgba(0,212,255,0.5)';
+      cc.fillStyle = isSelected ? '#00d4ff' : 'rgba(0,212,255,0.5)';
+      if (isMerged) cc.fillStyle = isSelected ? '#a78bfa' : 'rgba(167, 139, 250, 0.5)'; // purple merged
       cc.fillRect(x, ny, nw, 4);
     });
-  });
+  };
+
+  mrTakes.forEach((take, i) => renderThumb(take, i, false));
+  if (mrTakes.length > 1) {
+    const mergedSeq = mrMergeTakes(mrTakes);
+    renderThumb({ notes: mergedSeq, bpm: Math.round(mrTakes.reduce((a, b) => a + b.bpm, 0) / mrTakes.length) }, 'merged', true);
+  }
 
   const addBtn = document.getElementById('mrAddTakeBtn');
   if (addBtn) addBtn.disabled = mrTakes.length >= 3;
@@ -366,6 +384,38 @@ function mrInitFromDetected() {
 
   const sub = document.getElementById('mrSub');
   if (sub) sub.textContent = `${seq.length} notes detected at ~${bpm} BPM · adjust as needed`;
+}
+
+// ── Strict Quantization (Auto-Tune Timing) ──
+function mrAutoTuneSequence() {
+  if (mrSequence.length === 0) return;
+  mrSequence.forEach(n => {
+    n.beat = Math.round(n.beat * 2) / 2; // snap to 8th
+    n.dur = Math.max(0.25, Math.round((n.dur || 0.5) * 2) / 2);
+  });
+  
+  // Merge overlapping or identical consecutive notes after snapping
+  const snapped = [];
+  mrSequence.sort((a,b) => a.beat - b.beat).forEach(n => {
+    if (snapped.length > 0) {
+      const prev = snapped[snapped.length - 1];
+      if (prev.beat === n.beat) {
+        // keep the longer/higher confident note
+        if ((n.conf||1) > (prev.conf||1)) {
+          snapped[snapped.length - 1] = n;
+        }
+        return;
+      }
+      if (prev.beat + prev.dur > n.beat) {
+        prev.dur = n.beat - prev.beat; // trim overlap
+      }
+    }
+    snapped.push(n);
+  });
+  
+  mrSequence = snapped;
+  mrDrawRoll();
+  mrUpdateUI();
 }
 
 // ── Add another take ──

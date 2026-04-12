@@ -253,7 +253,7 @@ function nbOnTouchEnd(e)   { e.preventDefault(); nbOnMouseUp(e.changedTouches[0]
 // ── Play single note preview ──
 async function nbPlayNote(midi) {
   await Tone.start();
-  const { sampler: s } = await loadSampler(selectedInstrument);
+  const { sampler: s } = await loadMelodySampler(melodyInstrument);
   s.triggerAttackRelease(Tone.Frequency(midi, 'midi').toNote(), '8n', Tone.now() + 0.05);
 }
 
@@ -271,7 +271,7 @@ async function nbPlaySequence() {
   if (nbSequence.length === 0) return;
 
   await Tone.start();
-  const { sampler: s } = await loadSampler(selectedInstrument);
+  const { sampler: s } = await loadMelodySampler(melodyInstrument);
 
   nbSeqPlaying = true;
   btn.textContent = '■  stop';
@@ -410,7 +410,7 @@ document.getElementById('nbBarsUp').addEventListener('click', () => {
 document.querySelector('.nb-octave-row').addEventListener('click', e => {
   const btn = e.target.closest('.inst-btn[data-inst]');
   if (!btn) return;
-  setInstrument(btn.dataset.inst);
+  setMelodyInstrument(btn.dataset.inst);
 });
 
 document.getElementById('nbAnalyseBtn').addEventListener('click', () => {

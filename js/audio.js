@@ -19,6 +19,7 @@ let recAudioCtx = null;
 
 let detectedPitches = []; // [{midi, pc, freq, time, dur}]
 let pitchSource = 'mic';  // 'mic' | 'builder'
+let rawAudioBlob = null;
 
 function setRecStep(msg) {
   const el = document.getElementById('procStep');
@@ -231,8 +232,8 @@ async function analyseRecording() {
     return false;
   }
 
-  const blob = new Blob(recordedChunks, { type: recordedChunks[0].type || 'audio/webm' });
-  const arrayBuf = await blob.arrayBuffer();
+  rawAudioBlob = new Blob(recordedChunks, { type: recordedChunks[0].type || 'audio/webm' });
+  const arrayBuf = await rawAudioBlob.arrayBuffer();
 
   setRecStep('Decoding audio...');
   let audioBuffer;
@@ -288,7 +289,7 @@ async function analyseAudioBuffer(audioBuffer) {
   const silenceRms = 0.012;
 
   // ── Pass 1: YIN pitch + RMS for every frame ──
-  const frames = [];
+  const rawFrames = [];
   const totalFrames = Math.floor((totalSamples - frameSize) / hopSize) + 1;
   const YIELD_EVERY = 200;
 
@@ -308,18 +309,59 @@ async function analyseAudioBuffer(audioBuffer) {
 
     const timeSec = pos / sr;
     if (rms < silenceRms) {
-      frames.push({ timeSec, rms, freq: null, midi: null });
+      rawFrames.push({ timeSec, rms, freq: null });
       continue;
     }
 
     const freq = detectPitch(frame, sr);
-    const midi = freq ? freqToMidi(freq) : null;
-    const validMidi = (midi !== null && midi >= 36 && midi <= 96) ? midi : null;
-    frames.push({ timeSec, rms, freq, midi: validMidi });
+    rawFrames.push({ timeSec, rms, freq });
+  }
+
+  // ── Pass 1b: Median Filter (Size 5) on Raw Frequencies ──
+  // Rejects transient octave-jumps instantly without blurring active note edges.
+  const medFrames = [];
+  for (let i = 0; i < rawFrames.length; i++) {
+    const f = rawFrames[i];
+    let freqWindow = [];
+    for (let j = Math.max(0, i - 2); j <= Math.min(rawFrames.length - 1, i + 2); j++) {
+      if (rawFrames[j].freq !== null) freqWindow.push(rawFrames[j].freq);
+    }
+    let medFreq = null;
+    if (freqWindow.length > 0) {
+      freqWindow.sort((a,b) => a - b);
+      medFreq = freqWindow[Math.floor(freqWindow.length / 2)];
+    }
+    medFrames.push({ timeSec: f.timeSec, rms: f.rms, freq: medFreq, rawFreq: f.freq });
+  }
+
+  // ── Pass 1c: Hysteresis MIDI Quantization ("Autotune Snap") ──
+  // Only shift to a new note if pitch drifts by >50 cents from the explicitly locked note.
+  const frames = [];
+  let currentLockedMidi = null;
+  const HYSTERESIS_THRESHOLD = 0.50; // cents / 100
+
+  for (let i = 0; i < medFrames.length; i++) {
+    const f = medFrames[i];
+    let midi = null;
+    
+    if (f.freq !== null) {
+      const floatMidi = 12 * Math.log2(f.freq / 440) + 69;
+      if (currentLockedMidi === null) {
+        currentLockedMidi = Math.round(floatMidi);
+      } else {
+        if (Math.abs(floatMidi - currentLockedMidi) > HYSTERESIS_THRESHOLD) {
+          currentLockedMidi = Math.round(floatMidi);
+        }
+      }
+      midi = (currentLockedMidi >= 36 && currentLockedMidi <= 96) ? currentLockedMidi : null;
+    } else {
+      currentLockedMidi = null;
+    }
+    frames.push({ ...f, midi });
   }
 
   // ── Pass 2: majority-vote smoothing ──
-  const SMOOTH_FRAMES = 5;
+  const SMOOTH_FRAMES = 7; // Raised from 5 to 7 (slower Retune speed)
   const smoothed = frames.map((f, i) => {
     if (f.midi === null) return { ...f, midi: null };
     const window = frames.slice(Math.max(0, i - SMOOTH_FRAMES), i + SMOOTH_FRAMES + 1)
@@ -335,8 +377,8 @@ async function analyseAudioBuffer(audioBuffer) {
   });
 
   // ── Pass 3: onset segmentation ──
-  const MIN_NOTE_MS  = 80;
-  const MIN_NOTE_RMS = 0.018;
+  const MIN_NOTE_MS  = 100;  // Raised from 80ms, but lower than 130 to catch snappier notes
+  const MIN_NOTE_RMS = 0.016; 
   const GLUE_GAP_MS  = 60;
 
   const raw = [];

@@ -40,7 +40,7 @@ function buildResults() {
     }
     stopPlayback();
     await Tone.start();
-    const { sampler: s } = await loadMelodySampler(selectedInstrument);
+    const { sampler: s } = await loadMelodySampler(melodyInstrument);
     btn.dataset.playing = '1';
     btn.textContent = '■ stop';
 
@@ -136,9 +136,10 @@ function buildResults() {
 
       <p class="card-desc">${scale.desc}</p>
 
-      <div class="card-actions">
+      <div class="card-actions" style="display:flex; align-items:center;">
         <button class="play-btn" data-idx="${idx}" style="background:${scale.color}">▶  play</button>
-        <span class="roman-label">${bpmLabel}</span>
+        <button class="edit-btn" data-idx="${idx}" style="margin-left: 10px; font-family:'Space Mono', monospace; font-size:11px; padding: 5px 14px; border-radius:4px; background:transparent; border:1px solid ${scale.color}55; color:var(--text2); cursor:pointer;">✎ edit &amp; export</button>
+        <span class="roman-label" style="margin-left:auto; font-family:'Space Mono', monospace; font-size:11px; color:var(--text3);">${bpmLabel}</span>
       </div>
 
       ${altProgsHTML}
@@ -159,6 +160,16 @@ function buildResults() {
         await playSuggestion(result, detectedPitches, altBars, bpm, firstNoteSecOffset, btn, altPlayIdx);
       });
     });
+
+    const editBtn = card.querySelector('.edit-btn');
+    if (editBtn) {
+      editBtn.addEventListener('click', () => {
+        stopPlayback();
+        if (typeof openEditor === 'function') {
+          openEditor(bars, detectedPitches, bpm, result);
+        }
+      });
+    }
 
     container.appendChild(card);
   });

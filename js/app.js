@@ -6,7 +6,7 @@
 /* ───────────────────────────────────────────────
    STATE MACHINE
 ─────────────────────────────────────────────── */
-const SCREENS = ['idle','notebuilder','recording','mic-review','processing','results'];
+const SCREENS = ['idle','notebuilder','recording','mic-review','processing','results','editor'];
 function showScreen(name) {
   SCREENS.forEach(s => {
     document.getElementById('screen-' + s).classList.toggle('active', s === name);
@@ -69,7 +69,7 @@ document.getElementById('stopBtn').addEventListener('click', async () => {
     const { seq, bpm } = mrPitchesToSequence(detectedPitches);
     const label = `Take ${mrTakes.length + 1}`;
     mrTakes.push({ notes: seq.map(n => ({ ...n })), bpm, label });
-    mrActiveTake = mrTakes.length - 1;
+    mrActiveTake = mrTakes.length > 1 ? 'merged' : 0;
     mrSequence   = mrTakes.length > 1 ? mrMergeTakes(mrTakes) : mrTakes[0].notes.map(n => ({ ...n }));
     mrRenderTakes();
     mrDrawRoll();
@@ -140,6 +140,7 @@ document.getElementById('mrBpmUp').addEventListener('click', () => {
 
 document.getElementById('mrResetBtn').addEventListener('click', () => {
   if (mrTakes.length > 0) {
+    mrActiveTake = mrTakes.length > 1 ? 'merged' : 0;
     mrSequence = mrTakes.length > 1
       ? mrMergeTakes(mrTakes)
       : mrTakes[0].notes.map(n => ({ ...n }));
@@ -150,12 +151,39 @@ document.getElementById('mrResetBtn').addEventListener('click', () => {
   mrUpdateUI();
 });
 
+document.getElementById('mrAutoTuneBtn').addEventListener('click', () => {
+  if (typeof mrAutoTuneSequence !== 'undefined') mrAutoTuneSequence();
+});
+
+let mrRawAudioElement = null;
+document.getElementById('mrPlayRawBtn').addEventListener('click', () => {
+  if (typeof rawAudioBlob === 'undefined' || !rawAudioBlob) return;
+  const btn = document.getElementById('mrPlayRawBtn');
+  
+  if (mrRawAudioElement) {
+    mrRawAudioElement.pause();
+    mrRawAudioElement = null;
+    btn.textContent = '🎤 play raw mic';
+    return;
+  }
+  
+  const url = URL.createObjectURL(rawAudioBlob);
+  mrRawAudioElement = new Audio(url);
+  mrRawAudioElement.play();
+  btn.textContent = '❚❚ stop raw';
+  
+  mrRawAudioElement.onended = () => {
+    mrRawAudioElement = null;
+    btn.textContent = '🎤 play raw mic';
+  };
+});
+
 document.getElementById('mrPlayBtn').addEventListener('click', async () => {
   if (mrSequence.length === 0) return;
   stopPlayback();
 
   await Tone.start();
-  const { sampler: mel } = await loadMelodySampler(selectedInstrument);
+  const { sampler: mel } = await loadMelodySampler(melodyInstrument);
   const secPerBeat = 60 / mrBpm;
   const now = Tone.now() + 0.05;
   const gen = ++playGeneration;
@@ -215,12 +243,20 @@ document.getElementById('mrAnalyseBtn').addEventListener('click', () => {
 });
 
 /* ───────────────────────────────────────────────
-   INSTRUMENT + MELODY TOGGLE
+   INSTRUMENT + MELODY TOGGLE + REVERB
 ─────────────────────────────────────────────── */
-function setInstrument(inst) {
-  selectedInstrument = inst;
+function setMelodyInstrument(inst) {
+  melodyInstrument = inst;
   delete melodySamplerCache[inst];
-  document.querySelectorAll('.inst-btn[data-inst]').forEach(b => {
+  document.querySelectorAll('.inst-btn-mel, .nb-octave-row .inst-btn').forEach(b => {
+    b.classList.toggle('active', b.dataset.inst === inst);
+  });
+}
+
+function setChordInstrument(inst) {
+  chordInstrument = inst;
+  delete samplerCache[inst];
+  document.querySelectorAll('.inst-btn-chord').forEach(b => {
     b.classList.toggle('active', b.dataset.inst === inst);
   });
 }
@@ -233,12 +269,26 @@ document.getElementById('melodyToggle').addEventListener('click', () => {
   stopPlayback();
 });
 
-document.getElementById('instrumentBar').addEventListener('click', e => {
-  const btn = e.target.closest('.inst-btn[data-inst]');
+document.getElementById('instrumentBar-melody')?.addEventListener('click', e => {
+  const btn = e.target.closest('.inst-btn-mel');
   if (!btn) return;
-  setInstrument(btn.dataset.inst);
+  setMelodyInstrument(btn.dataset.inst);
   stopPlayback();
 });
+
+document.getElementById('instrumentBar-chords')?.addEventListener('click', e => {
+  const btn = e.target.closest('.inst-btn-chord');
+  if (!btn) return;
+  setChordInstrument(btn.dataset.inst);
+  stopPlayback();
+});
+
+const reverbSlider = document.getElementById('reverbSlider');
+if (reverbSlider) {
+  reverbSlider.addEventListener('input', e => {
+    globalReverbAmount = parseInt(e.target.value) / 100;
+  });
+}
 
 /* ───────────────────────────────────────────────
    SAVED MELODIES  (localStorage)
@@ -336,6 +386,8 @@ function savedSaveFromResults() {
     source: pitchSource || 'mic',
     pitches: detectedPitches.map(p => ({ ...p })),
     sequence: isBuilder ? nbSequence.map(n => ({ ...n })) : null,
+    chords: window._lastBars ? window._lastBars.map(b => ({...b})) : null,
+    scale: window._lastScaleName || null,
   });
   savedWrite(list);
   savedRender();
@@ -385,7 +437,11 @@ buildResults = function() {
     const pcs = detectedPitches.map(p => p.pc);
     const best = rankScales(pcs)[0];
     const r = buildBarChords(detectedPitches, best.scale.profile, best.root, pitchSource === 'builder' ? nbBpm : null, best.scale.key);
-    if (r) window._lastBpm = r.bpm;
+    if (r) {
+      window._lastBpm = r.bpm;
+      window._lastBars = r.bars;
+      window._lastScaleName = `${pcToName(best.root)} ${best.scale.name}`;
+    }
   } catch(e) {}
 };
 

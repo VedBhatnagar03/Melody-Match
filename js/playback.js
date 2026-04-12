@@ -6,8 +6,10 @@
 let activeSynths = [];
 let playingIdx = -1;
 let playGeneration = 0;
-let selectedInstrument = 'piano';
+let melodyInstrument = 'piano';
+let chordInstrument = 'piano';
 let melodyEnabled = true;
+let globalReverbAmount = 0.18;
 const samplerCache = {};
 const melodySamplerCache = {};
 
@@ -16,12 +18,26 @@ function loadSampler(instKey) {
   const cfg = INSTRUMENTS[instKey];
   const promise = new Promise(resolve => {
     const gain = new Tone.Gain(1).toDestination();
+    
+    if (cfg && cfg.isDrum) {
+      const kick = new Tone.MembraneSynth().connect(gain);
+      const hat = new Tone.MetalSynth({ envelope: { attack: 0.001, decay: 0.1, release: 0.01 } }).connect(gain);
+      gain.gain.value = 0.5;
+      resolve({ isDrum: true, drumSynth: { kick, hat }, gain });
+      return;
+    }
+    
     const s = new Tone.Sampler(cfg.notes, {
       baseUrl: cfg.url,
       release: cfg.release,
       onload: () => resolve({ sampler: s, gain }),
+      onerror: () => {
+        console.warn('Playback failed to load', instKey, 'CDN. Using generic poly synth fallback.');
+        const fallback = new Tone.PolySynth(Tone.Synth, { oscillator: { type: 'triangle' } }).connect(gain);
+        resolve({ sampler: fallback, gain });
+      }
     }).connect(gain);
-    s.volume.value = cfg.volume;
+    if (s.volume) s.volume.value = cfg.volume;
   });
   samplerCache[instKey] = promise;
   return promise;
@@ -32,12 +48,26 @@ function loadMelodySampler(instKey) {
   const cfg = INSTRUMENTS[instKey];
   const promise = new Promise(resolve => {
     const gain = new Tone.Gain(1).toDestination();
+    
+    if (cfg && cfg.isDrum) {
+      const kick = new Tone.MembraneSynth().connect(gain);
+      const hat = new Tone.MetalSynth({ envelope: { attack: 0.001, decay: 0.1, release: 0.01 } }).connect(gain);
+      gain.gain.value = 0.6;
+      resolve({ isDrum: true, drumSynth: { kick, hat }, gain });
+      return;
+    }
+
     const s = new Tone.Sampler(cfg.notes, {
       baseUrl: cfg.url,
       release: cfg.release,
       onload: () => resolve({ sampler: s, gain }),
+      onerror: () => {
+        console.warn('Playback failed to load', instKey, 'CDN. Using generic synth fallback.');
+        const fallback = new Tone.PolySynth(Tone.Synth).connect(gain);
+        resolve({ sampler: fallback, gain });
+      }
     }).connect(gain);
-    s.volume.value = cfg.volume + 2;
+    if (s.volume) s.volume.value = cfg.volume + 2;
   });
   melodySamplerCache[instKey] = promise;
   return promise;
@@ -45,37 +75,79 @@ function loadMelodySampler(instKey) {
 
 function stopPlayback() {
   playGeneration++;
+  Tone.Transport.stop();
+  Tone.Transport.cancel();
   activeSynths.forEach(s => { try { s.releaseAll ? s.releaseAll() : null; } catch(e){} });
   activeSynths = [];
   playingIdx = -1;
   document.querySelectorAll('.play-btn').forEach(b => {
     b.classList.remove('playing');
+    b.classList.remove('paused');
     b.textContent = '▶  play';
     b.disabled = false;
   });
   document.querySelectorAll('.alt-play-btn').forEach(b => {
     b.classList.remove('playing');
+    b.classList.remove('paused');
     b.textContent = '▶';
   });
 }
 
+function togglePlayPause(btnEl, isAlt = false) {
+  if (Tone.Transport.state === 'started') {
+    Tone.Transport.pause();
+    btnEl.classList.add('paused');
+    btnEl.textContent = isAlt ? '❚❚' : '❚❚ pause';
+  } else if (Tone.Transport.state === 'paused') {
+    Tone.Transport.start();
+    btnEl.classList.remove('paused');
+    btnEl.textContent = isAlt ? '■' : '■  stop';
+  }
+}
+
 async function playSuggestion(result, detectedPitches, bars, bpm, firstNoteSecOffset, btnEl, idx) {
-  if (playingIdx === idx) { stopPlayback(); return; }
+  const isAlt = btnEl.classList.contains('alt-play-btn');
+  
+  if (playingIdx === idx) { 
+    if (Tone.Transport.state === 'started' || Tone.Transport.state === 'paused') {
+      togglePlayPause(btnEl, isAlt);
+      return;
+    }
+  }
+
   stopPlayback();
 
   await Tone.start();
   playingIdx = idx;
   btnEl.classList.add('playing');
-  btnEl.textContent = '⟳  loading...';
+  btnEl.textContent = isAlt ? '...' : '⟳  loading...';
   btnEl.disabled = true;
 
-  let chordHandle, melodyHandle;
+  let chordHandle, melodyHandle, rawPlayer;
   try {
-    chordHandle  = await loadSampler(selectedInstrument);
-    melodyHandle = await loadMelodySampler(selectedInstrument);
+    chordHandle  = await loadSampler(chordInstrument);
+    melodyHandle = await loadMelodySampler(melodyInstrument);
+    
+    if (typeof rawAudioBlob !== 'undefined' && rawAudioBlob && pitchSource === 'mic') {
+      const rawMicVol = document.getElementById('rawMicSlider') ? parseInt(document.getElementById('rawMicSlider').value) / 100 : 0.8;
+      if (rawMicVol > 0) {
+        await new Promise(resolve => {
+          rawPlayer = new Tone.Player({
+            url: URL.createObjectURL(rawAudioBlob),
+            onload: resolve,
+            onerror: resolve
+          }).toDestination();
+        });
+        if (rawPlayer.loaded) {
+          rawPlayer.volume.value = Tone.gainToDb(Math.max(0.01, rawMicVol * 0.7));
+        } else {
+          rawPlayer = null;
+        }
+      }
+    }
   } catch(e) {
     btnEl.classList.remove('playing');
-    btnEl.textContent = '▶  play';
+    btnEl.textContent = isAlt ? '▶' : '▶  play';
     btnEl.disabled = false;
     playingIdx = -1;
     return;
@@ -83,18 +155,19 @@ async function playSuggestion(result, detectedPitches, bars, bpm, firstNoteSecOf
 
   if (playingIdx !== idx) return;
 
-  btnEl.textContent = '■  stop';
+  btnEl.textContent = isAlt ? '■' : '■  stop';
   btnEl.disabled = false;
 
-  const chordSampler  = chordHandle.sampler;
-  const melSampler    = melodyHandle.sampler;
   const chordGain     = chordHandle.gain;
   const melGain       = melodyHandle.gain;
+  const isChordDrum   = chordHandle.isDrum;
+  const isMelDrum     = melodyHandle.isDrum;
 
   const reverbCfg = result.scale && result.scale.reverb;
-  const effectiveReverb = reverbCfg || { decay: 1.2, wet: 0.18 };
+  const recommendedReverb = reverbCfg || { decay: 1.2, wet: 0.18 };
+  const targetWet = recommendedReverb.wet * (globalReverbAmount / 0.18);
 
-  const reverb  = new Tone.Reverb({ decay: effectiveReverb.decay, wet: effectiveReverb.wet, preDelay: 0.02 });
+  const reverb  = new Tone.Reverb({ decay: recommendedReverb.decay, wet: Math.min(1.0, targetWet), preDelay: 0.02 });
   const chordEQ = new Tone.EQ3({ low: 2, mid: -1, high: -4 });
   const melEQ   = new Tone.EQ3({ low: -2, mid: 1, high: -2 });
 
@@ -111,9 +184,10 @@ async function playSuggestion(result, detectedPitches, bars, bpm, firstNoteSecOf
   reverb.toDestination();
 
   activeSynths = [
-    { releaseAll: () => { try { chordSampler.releaseAll(); } catch(e){} } },
-    { releaseAll: () => { try { melSampler.releaseAll();   } catch(e){} } },
+    { releaseAll: () => { try { if (!isChordDrum) chordHandle.sampler.releaseAll(); } catch(e){} } },
+    { releaseAll: () => { try { if (!isMelDrum) melodyHandle.sampler.releaseAll();   } catch(e){} } },
     { releaseAll: () => {
+        try { if (rawPlayer) rawPlayer.dispose(); } catch(e){}
         try { chordGain.disconnect(); melGain.disconnect(); } catch(e){}
         try { chordEQ.dispose(); melEQ.dispose(); reverb.dispose(); } catch(e){}
         try {
@@ -125,78 +199,104 @@ async function playSuggestion(result, detectedPitches, bars, bpm, firstNoteSecOf
     }},
   ];
 
-  const secPerBeat = 60 / Math.max(40, Math.min(240, bpm));
-  const barLen     = secPerBeat * 4;
-  const totalLen   = bars.length * barLen;
-  const now        = Tone.now() + 0.05;
-  const gen        = playGeneration;
-
-  const trigger = (sampler, note, dur, time) => {
-    const delay = Math.max(0, (time - Tone.now()) * 1000);
-    setTimeout(() => {
-      if (playGeneration !== gen) return;
-      sampler.triggerAttackRelease(note, dur, Tone.now() + 0.01);
-    }, delay);
-  };
-
+  Tone.Transport.bpm.value = Math.max(40, Math.min(240, bpm));
+  const secPerBeat = 60 / Tone.Transport.bpm.value;
+  const barLen = secPerBeat * 4;
   const pseudoRand = (seed) => ((Math.sin(seed * 9301 + 49297) * 0.5 + 0.5));
 
+  // CHORDS — all times in seconds from Transport start (bar i starts at i * barLen seconds)
   bars.forEach((bar, i) => {
-    const t = now + i * barLen;
+    const tStartSec = i * barLen;
 
-    const bassNote = Tone.Frequency(bar.root + 36, 'midi').toNote();
+    if (isChordDrum) {
+      for (let b = 0; b < 4; b++) {
+        const beatSec = tStartSec + b * secPerBeat;
+        Tone.Transport.schedule((time) => {
+          chordHandle.drumSynth.kick.triggerAttackRelease("C1", "8n", time);
+        }, `+${beatSec}`);
+        Tone.Transport.schedule((time) => {
+          chordHandle.drumSynth.hat.triggerAttackRelease("32n", time, 0.4);
+        }, `+${beatSec + secPerBeat * 0.5}`); // offbeat (half a beat later)
+      }
+    } else {
+      const chordSampler = chordHandle.sampler;
+      const bassNote = Tone.Frequency(bar.root + 36, 'midi').toNote();
+      const midNotes = bar.intervals.map(o => Tone.Frequency(bar.root + 48 + (o >= 12 ? o - 12 : o), 'midi').toNote());
+      const coreIntervals = bar.intervals.slice(0, 3);
+      const upperNotes = [
+        ...coreIntervals.slice(1).map(o => Tone.Frequency(bar.root + 60 + o, 'midi').toNote()),
+        Tone.Frequency(bar.root + 72, 'midi').toNote(),
+      ];
 
-    const midNotes = bar.intervals.map(o => {
-      const midi = bar.root + 48 + (o >= 12 ? o - 12 : o);
-      return Tone.Frequency(midi, 'midi').toNote();
-    });
-
-    const coreIntervals = bar.intervals.slice(0, 3);
-    const upperNotes = [
-      ...coreIntervals.slice(1).map(o => Tone.Frequency(bar.root + 60 + o, 'midi').toNote()),
-      Tone.Frequency(bar.root + 72, 'midi').toNote(),
-    ];
-
-    const holdDur = barLen * 0.93;
-
-    trigger(chordSampler, bassNote, holdDur, t);
-
-    midNotes.forEach((note, j) => {
-      const strum = j * (0.018 + pseudoRand(i * 10 + j) * 0.012);
-      trigger(chordSampler, note, holdDur, t + strum);
-    });
-
-    upperNotes.forEach((note, j) => {
-      const strum = 0.04 + j * (0.015 + pseudoRand(i * 20 + j) * 0.01);
-      trigger(chordSampler, note, holdDur * 0.55, t + strum);
-    });
+      Tone.Transport.schedule((time) => {
+        chordSampler.triggerAttackRelease(bassNote, barLen * 0.93, time);
+        midNotes.forEach((note, j) => {
+          const strum = j * (0.018 + pseudoRand(i * 10 + j) * 0.012);
+          chordSampler.triggerAttackRelease(note, barLen * 0.93, time + strum);
+        });
+        upperNotes.forEach((note, j) => {
+          const strum = 0.04 + j * (0.015 + pseudoRand(i * 20 + j) * 0.01);
+          chordSampler.triggerAttackRelease(note, barLen * 0.55, time + strum);
+        });
+      }, `+${tStartSec}`);
+    }
   });
 
-  // --- Melody ---
+  // MELODY — all times in seconds from Transport start
   if (melodyEnabled && detectedPitches.length > 0) {
     if (pitchSource === 'builder') {
+      // Notes have exact beat positions — convert beats → seconds.
+      // Add firstNoteSecOffset so the melody aligns with the chord bar grid
+      // (chords start at Transport 0 = bar 0 start, which is firstNoteSecOffset
+      // seconds before the first note when the first note falls mid-bar).
       detectedPitches.forEach(p => {
-        const relSec = p.beat * secPerBeat;
-        const dur    = Math.min((p.dur ?? 1) * secPerBeat * 0.9, barLen);
-        trigger(melSampler, Tone.Frequency(p.midi, 'midi').toNote(), dur, now + relSec);
+        const noteSec = p.beat * secPerBeat + (firstNoteSecOffset || 0);
+        const dur = Math.min((p.dur ?? 1) * secPerBeat * 0.9, bars.length * barLen);
+        Tone.Transport.schedule((time) => {
+          if (isMelDrum) {
+            melodyHandle.drumSynth.hat.triggerAttackRelease("16n", time);
+          } else {
+            melodyHandle.sampler.triggerAttackRelease(Tone.Frequency(p.midi, 'midi').toNote(), dur, time);
+          }
+        }, `+${Math.max(0, noteSec)}`);
       });
     } else {
+      // Mic path — notes have real timestamps; scale them to fill the total bar length.
       const t0ms     = detectedPitches[0].time;
       const lastNote = detectedPitches[detectedPitches.length - 1];
-      const spanMs   = Math.max(1, (lastNote.time + (lastNote.dur ?? 1) * 1000 * secPerBeat) - t0ms);
+      const spanMs   = Math.max(1, (lastNote.time + (lastNote.dur ?? 1) * secPerBeat * 1000) - t0ms);
       const totalSec = bars.length * barLen;
-      const scale    = totalSec / (spanMs / 1000);
+      const timeScale = totalSec / (spanMs / 1000);
+
+      // Play raw mic audio scaled to match
+      if (rawPlayer && rawPlayer.loaded) {
+        rawPlayer.playbackRate = 1 / timeScale;
+        rawPlayer.connect(reverb);
+        Tone.Transport.schedule((time) => {
+          rawPlayer.start(time, t0ms / 1000);
+        }, `+0`);
+      }
 
       detectedPitches.forEach(p => {
-        const relSec = ((p.time - t0ms) / 1000) * scale;
-        const rawDurSec = (p.dur ?? 0.5) * secPerBeat;
-        const dur = Math.min(rawDurSec * scale * 0.88, barLen * 0.95);
-        trigger(melSampler, Tone.Frequency(p.midi, 'midi').toNote(), Math.max(0.05, dur), now + relSec);
+        const relSec = ((p.time - t0ms) / 1000) * timeScale;
+        const dur    = Math.min((p.dur ?? 0.5) * secPerBeat * timeScale * 0.88, barLen * 0.95);
+        Tone.Transport.schedule((time) => {
+          if (isMelDrum) {
+            melodyHandle.drumSynth.hat.triggerAttackRelease("16n", time);
+          } else {
+            melodyHandle.sampler.triggerAttackRelease(Tone.Frequency(p.midi, 'midi').toNote(), Math.max(0.05, dur), time);
+          }
+        }, `+${Math.max(0, relSec)}`);
       });
     }
   }
 
-  setTimeout(() => {
-    if (playingIdx === idx) stopPlayback();
-  }, (totalLen + 2.5) * 1000);
+  const totalLen = bars.length * barLen;
+  Tone.Transport.schedule((time) => {
+    Tone.Draw.schedule(() => {
+      stopPlayback();
+    }, time);
+  }, `+${totalLen + 0.5}`);
+
+  Tone.Transport.start();
 }

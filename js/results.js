@@ -87,8 +87,8 @@ function buildResults() {
     }).join('');
 
     const chordsHTML = makeChipsHTML(bars || [], 'chord-chip');
-    const bpmLabel = barResult ? `${bpm} bpm · ${bars.length} bars` : '';
-    const numBarsForAlts = bars ? bars.length : 4;
+    const bpmLabel = (barResult && bars) ? `${bpm} bpm · ${bars.length} bars` : '';
+    const numBarsForAlts = (bars && bars.length > 0) ? bars.length : 4;
 
     const altProgs = (SCALE_PROGRESSIONS[scale.key] || []).slice(0, 4).map((degOffsets, altIdx) => {
       const altBars = buildProgBars(degOffsets, scale.profile, root, numBarsForAlts, scale.key);

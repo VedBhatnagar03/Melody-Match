@@ -361,9 +361,14 @@ function mrRenderTakes() {
       delBtn.addEventListener('click', e => {
         e.stopPropagation();
         mrTakes.splice(i, 1);
-        if (mrTakes.length <= 1) mrActiveTake = 0;
-        else if (mrActiveTake === i) mrActiveTake = Math.max(0, i - 1);
-        else if (mrActiveTake > i && mrActiveTake !== 'merged') mrActiveTake--;
+        // Merged mode requires ≥2 takes; clamp to valid state
+        if (mrTakes.length <= 1) {
+          mrActiveTake = 0;
+        } else if (mrActiveTake === i) {
+          mrActiveTake = Math.max(0, i - 1);
+        } else if (mrActiveTake !== 'merged' && mrActiveTake > i) {
+          mrActiveTake--;
+        }
         
         if (mrTakes.length > 0) {
           mrSequence = mrActiveTake === 'merged' ? mrMergeTakes(mrTakes) : mrTakes[mrActiveTake].notes.map(n => ({ ...n }));

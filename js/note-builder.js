@@ -35,6 +35,7 @@ const NB_BLACKS = [
 let nbCanvas, nbCtx;
 let nbDragging = null;
 let nbPlayhead = -1;
+let nbTimeouts = []; // tracked so they can be cancelled on stop
 
 function nbGetRows() {
   if (nbSequence.length === 0) return [];
@@ -386,18 +387,27 @@ async function nbPlayNote(midi) {
   s.triggerAttackRelease(Tone.Frequency(midi, 'midi').toNote(), '8n', Tone.now() + 0.05);
 }
 
+function nbStopSequence() {
+  // Cancel all pending timeouts from the last play call
+  nbTimeouts.forEach(id => clearTimeout(id));
+  nbTimeouts = [];
+  nbSeqPlaying = false;
+  nbPlayhead = -1;
+  playGeneration++;
+  const btn = document.getElementById('nbPlaySeqBtn');
+  btn.textContent = '▶  play sequence';
+  btn.classList.remove('playing');
+  nbDrawRoll();
+}
+
 async function nbPlaySequence() {
   const btn = document.getElementById('nbPlaySeqBtn');
-  if (nbSeqPlaying) {
-    nbSeqPlaying = false;
-    nbPlayhead = -1;
-    playGeneration++;
-    btn.textContent = '▶  play sequence';
-    btn.classList.remove('playing');
-    nbDrawRoll();
-    return;
-  }
+  if (nbSeqPlaying) { nbStopSequence(); return; }
   if (nbSequence.length === 0) return;
+
+  // Cancel any lingering timeouts before starting fresh
+  nbTimeouts.forEach(id => clearTimeout(id));
+  nbTimeouts = [];
 
   await Tone.start();
   const { sampler: s } = await loadMelodySampler(melodyInstrument);
@@ -408,21 +418,20 @@ async function nbPlaySequence() {
 
   const secPerBeat = 60 / nbBpm;
   const sorted = [...nbSequence].sort((a, b) => a.beat - b.beat);
-  const now = Tone.now() + 0.05;
   const t0 = performance.now();
   const totalSec = (nbTotalBeats()) * secPerBeat;
-  const gen = playGeneration;
+  const gen = ++playGeneration;
 
   sorted.forEach(p => {
     const delay = p.beat * secPerBeat * 1000;
-    setTimeout(() => {
+    nbTimeouts.push(setTimeout(() => {
       if (playGeneration !== gen) return;
       s.triggerAttackRelease(
         Tone.Frequency(p.midi, 'midi').toNote(),
         Math.max(0.05, (p.dur ?? 1) * secPerBeat * 0.95),
         Tone.now() + 0.01
       );
-    }, delay);
+    }, delay));
   });
 
   // Metronome clicks
@@ -435,16 +444,21 @@ async function nbPlaySequence() {
     const totalBeats = nbTotalBeats();
     for (let b = 0; b < totalBeats; b++) {
       const isDownbeat = b % 4 === 0;
-      setTimeout(() => {
+      nbTimeouts.push(setTimeout(() => {
         if (playGeneration !== gen) return;
         clickSynth.triggerAttackRelease(isDownbeat ? 'C2' : 'C3', '32n', Tone.now() + 0.01);
-      }, b * secPerBeat * 1000);
+      }, b * secPerBeat * 1000));
     }
-    setTimeout(() => { try { clickSynth.dispose(); } catch(e) {} }, (totalSec + 0.5) * 1000);
+    nbTimeouts.push(setTimeout(() => { try { clickSynth.dispose(); } catch(e) {} }, (totalSec + 0.5) * 1000));
   }
 
   function animatePlayhead() {
-    if (!nbSeqPlaying) return;
+    if (playGeneration !== gen) return; // stopped or restarted
+    const nbScreen = document.getElementById('screen-notebuilder');
+    if (!nbScreen || !nbScreen.classList.contains('active')) {
+      // Screen hidden — stop cleanly without drawing
+      nbSeqPlaying = false; nbPlayhead = -1; return;
+    }
     const elapsed = (performance.now() - t0) / 1000;
     nbPlayhead = elapsed / secPerBeat;
     nbDrawRoll();

@@ -388,53 +388,41 @@ async function edTogglePlay(isExport = false) {
   const barLen     = secPerBeat * 4;
   const pseudoRand = (seed) => ((Math.sin(seed * 9301 + 49297) * 0.5 + 0.5));
 
-  // Schedule Chords
+  // Schedule Chords — use plain seconds to avoid Tone.js notation pitfalls
   edBars.forEach((bar, i) => {
-    const tStart = bar.beatOffset; // beats
-    if (chordHandle.isDrum) {
-      for(let b=0; b<4; b++){
-        Tone.Transport.schedule((time) => { chordHandle.drumSynth.kick.triggerAttackRelease("C1", "8n", time); }, `+0:0:${(tStart+b)*4}`);
-        Tone.Transport.schedule((time) => { chordHandle.drumSynth.hat.triggerAttackRelease("32n", time, 0.4); }, `+0:0:${(tStart+b)*4 + 2}`);
-      }
-    } else {
-      const chordSampler = chordHandle.sampler;
-      const bassNote = Tone.Frequency(bar.root + 36, 'midi').toNote();
-      const midNotes = bar.intervals.map(o => Tone.Frequency(bar.root + 48 + (o >= 12 ? o - 12 : o), 'midi').toNote());
-      const coreIntervals = bar.intervals.slice(0, 3);
-      const upperNotes = [
-        ...coreIntervals.slice(1).map(o => Tone.Frequency(bar.root + 60 + o, 'midi').toNote()),
-        Tone.Frequency(bar.root + 72, 'midi').toNote(),
-      ];
-      Tone.Transport.schedule((time) => {
-        chordSampler.triggerAttackRelease(bassNote, barLen * 0.93, time);
-        midNotes.forEach((note, j) => chordSampler.triggerAttackRelease(note, barLen * 0.93, time + j * (0.018 + pseudoRand(i*10+j)*0.012)));
-        upperNotes.forEach((note, j) => chordSampler.triggerAttackRelease(note, barLen * 0.55, time + 0.04 + j * (0.015 + pseudoRand(i*20+j)*0.01)));
-      }, `+0:0:${tStart * 4}`);
-    }
+    const tStartSec = bar.beatOffset * secPerBeat;
+    const chordSampler = chordHandle.sampler;
+    const bassNote = Tone.Frequency(Math.min(bar.root + 36, 96), 'midi').toNote();
+    const midNotes = bar.intervals.map(o => Tone.Frequency(Math.min(bar.root + 48 + (o >= 12 ? o - 12 : o), 96), 'midi').toNote());
+    const coreIntervals = bar.intervals.slice(0, 3);
+    const upperNotes = [
+      ...coreIntervals.slice(1).map(o => Tone.Frequency(Math.min(bar.root + 60 + o, 108), 'midi').toNote()),
+      Tone.Frequency(Math.min(bar.root + 72, 108), 'midi').toNote(),
+    ];
+    Tone.Transport.schedule((time) => {
+      chordSampler.triggerAttackRelease(bassNote, barLen * 0.93, time);
+      midNotes.forEach((note, j) => chordSampler.triggerAttackRelease(note, barLen * 0.93, time + j * (0.018 + pseudoRand(i*10+j)*0.012)));
+      upperNotes.forEach((note, j) => chordSampler.triggerAttackRelease(note, barLen * 0.55, time + 0.04 + j * (0.015 + pseudoRand(i*20+j)*0.01)));
+    }, `+${tStartSec}`);
   });
 
   // Schedule Melody
   edPitches.forEach(p => {
-    const tStart = p.beat; // beats
+    const tStartSec = p.beat * secPerBeat;
     const durRaw = p.dur ?? 1;
-    const durBeatFraction = durRaw * 4; // sixteenths
     Tone.Transport.schedule((time) => {
-      if(melodyHandle.isDrum){
-        melodyHandle.drumSynth.hat.triggerAttackRelease("16n", time);
-      } else {
-        const d = Math.min(durRaw * secPerBeat * 0.9, barLen);
-        melodyHandle.sampler.triggerAttackRelease(Tone.Frequency(p.midi, 'midi').toNote(), d, time);
-      }
-    }, `+0:0:${tStart * 4}`);
+      const d = Math.min(durRaw * secPerBeat * 0.9, barLen);
+      melodyHandle.sampler.triggerAttackRelease(Tone.Frequency(p.midi, 'midi').toNote(), d, time);
+    }, `+${tStartSec}`);
   });
 
   const totalBeats = getEdTotalBeats();
-  const loopEndStr = `+0:0:${totalBeats * 4}`;
+  const totalSec   = totalBeats * secPerBeat;
 
   if (!isExport) {
     Tone.Transport.loop = true;
     Tone.Transport.loopStart = 0;
-    Tone.Transport.loopEnd = `0:0:${totalBeats * 4}`;
+    Tone.Transport.loopEnd   = totalSec;
   } else {
     Tone.Transport.loop = false;
     Tone.Transport.schedule((time) => {
@@ -442,7 +430,7 @@ async function edTogglePlay(isExport = false) {
         stopEdPlayback();
         cleanup();
       }, time);
-    }, loopEndStr);
+    }, `+${totalSec}`);
   }
 
   Tone.Transport.start();
@@ -453,7 +441,7 @@ async function edTogglePlay(isExport = false) {
         const recording = await edRecorder.stop();
         cleanup();
         resolve(recording);
-      }, ((totalBeats * secPerBeat) + 2) * 1000);
+      }, (totalSec + 2) * 1000);
     });
   }
 }

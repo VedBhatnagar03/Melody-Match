@@ -185,7 +185,7 @@ function buildBarChords(pitches, scaleProfile, scaleRoot, fixedBpm, scaleKey) {
 
   const t0 = pitches[0].time;
   const totalMs = pitches[pitches.length - 1].time - t0 + msPerBar;
-  const numBars = (fixedBpm != null)
+  const numBars = (fixedBpm != null && typeof nbBars !== 'undefined' && nbBars > 0)
     ? nbBars
     : Math.max(2, Math.min(8, Math.round(totalMs / msPerBar)));
 

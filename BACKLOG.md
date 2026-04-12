@@ -17,39 +17,38 @@ Each item has a unique number that won't change. Completed items are marked ✅.
 
 ### Critical (crash or silently wrong output)
 
-**#1 — `runDemo()` missing `time` field on pitches**  
+**#1 ✅ — `runDemo()` missing `time` field on pitches**  
 `detectedPitches` created in `app.js runDemo()` has no `time` field.  
 `mrPitchesToSequence()` uses `p.time` for IOI-based BPM detection — every interval is `NaN`, BPM defaults to 100, all notes land at beat 0.  
 **Fix:** Add `time: i * 500` (evenly spaced 500ms) as a placeholder, or route demo through `mrInitFromDetected()` properly.
 
-**#2 — `music.js` references `nbBars` global inside `buildBarChords()`**  
+**#2 ✅ — `music.js` references `nbBars` global inside `buildBarChords()`**  
 When `fixedBpm != null`, bar count is read from `nbBars` directly instead of a parameter.  
 Chord bar count is always coupled to notebuilder state even when playing results from a recording.  
 **Fix:** Pass `bars` as an explicit parameter to `buildBarChords()`.
 
-**#3 — `results.js` — `bars.length` called when `bars` can be null**  
+**#3 ✅ — `results.js` — `bars.length` called when `bars` can be null**  
 `buildBarChords()` can return `null`. `bars` is checked on assignment but then used as `bars.length` two lines later without a null guard — hard crash.  
 **Fix:** Add `if (!bars) return;` guard before `bars.length` usage.
 
-**#4 — `editor.js` — Transport scheduling uses wrong Tone.js notation**  
+**#4 ✅ — `editor.js` — Transport scheduling uses wrong Tone.js notation**  
 Chord events scheduled with `` `+0:0:${tStart * 4}` ``. Tone.js interprets `bars:beats:sixteenths` with 480 PPQ internally — everything in the editor fires at completely wrong times.  
 **Fix:** Convert to plain seconds: `` `+${tStart * secPerBeat}` `` (same fix applied to `playback.js` previously).
 
-**#5 — `editor.js` — dead `isDrum` / `drumSynth` code**  
+**#5 ✅ — `editor.js` — dead `isDrum` / `drumSynth` code**  
 Editor playback checks `chordHandle.isDrum` and `chordHandle.drumSynth.kick` — these properties never exist on sampler objects. The drum path in the editor is entirely non-functional dead code.  
 **Fix:** Remove the `isDrum` branch; wire up `drumEnabled` from `playback.js` instead.
 
-**#6 — `nbPlaySequence()` — multiple `setTimeout` calls stack on rapid clicks**  
+**#6 ✅ — `nbPlaySequence()` — multiple `setTimeout` calls stack on rapid clicks**  
 Notes scheduled with raw `setTimeout`. Clicking Play rapidly queues multiple overlapping sets because only the `nbSeqPlaying` flag gates new starts — existing timeouts are never cancelled.  
 **Fix:** Store timeout IDs in an array and `clearTimeout` all of them on stop/restart.
 
-**#7 — Take deletion leaves `mrActiveTake === 'merged'` with only one take remaining**  
+**#7 ✅ — Take deletion leaves `mrActiveTake === 'merged'` with only one take remaining**  
 After deleting a take, if one remains and `mrActiveTake` is still `'merged'`, the merge UI indicator stays shown. Confusing and logically wrong.  
 **Fix:** After deletion, if `mrTakes.length <= 1` force `mrActiveTake = 0`.
 
-**#8 — Edit melody → notebuilder: unit confusion on `p.time`**  
-In `app.js editMelodyBtn` handler, converting mic-detected pitches to notebuilder format: `time` is in milliseconds but the conversion divides by `secPerBeat` not `secPerBeat * 1000`. Notes placed 1000× further along timeline than intended when `p.beat` is missing.  
-**Fix:** `beat: p.beat ?? ((p.time || 0) / 1000 / secPerBeat)` — the `/1000` is already there, double-check the path that reaches this branch.
+**#8 ✅ — Edit melody → notebuilder: unit confusion on `p.time`**  
+Investigated — conversion `beat: p.beat ?? ((p.time || 0) / 1000 / spb)` is already correct. `p.time` is ms, `/1000` → sec, `/spb` → beats. Not a bug in current code.
 
 ---
 

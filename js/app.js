@@ -18,20 +18,16 @@ function showScreen(name) {
    DEMO MODE
 ─────────────────────────────────────────────── */
 function runDemo() {
-  detectedPitches = [
-    {midi:62,pc:2,freq:293.7},
-    {midi:64,pc:4,freq:329.6},
-    {midi:65,pc:5,freq:349.2},
-    {midi:67,pc:7,freq:392.0},
-    {midi:62,pc:2,freq:293.7},
-    {midi:69,pc:9,freq:440.0},
-    {midi:67,pc:7,freq:392.0},
-    {midi:65,pc:5,freq:349.2},
-    {midi:60,pc:0,freq:261.6},
-    {midi:62,pc:2,freq:293.7},
-    {midi:64,pc:4,freq:329.6},
-    {midi:62,pc:2,freq:293.7},
-  ];
+  // time field (ms) required by mrPitchesToSequence() for IOI-based BPM detection
+  const demoNotes = [62,64,65,67,62,69,67,65,60,62,64,62];
+  const PC = [2,4,5,7,2,9,7,5,0,2,4,2];
+  const FREQ = [293.7,329.6,349.2,392.0,293.7,440.0,392.0,349.2,261.6,293.7,329.6,293.7];
+  detectedPitches = demoNotes.map((midi, i) => ({
+    midi, pc: PC[i], freq: FREQ[i],
+    time: i * 500,   // evenly spaced at 500ms → ~120 BPM
+    dur: 0.5,
+    beat: i * 1,     // one beat apart
+  }));
   showScreen('processing');
   setTimeout(() => {
     buildResults();

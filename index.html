@@ -1,11 +1,257 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta http-equiv="refresh" content="0; url=melodymatch.html">
-  <title>Melody Match</title>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MelodyMatch</title>
+<link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Syne:wght@400;600;700;800&display=swap" rel="stylesheet">
+<script src="https://unpkg.com/tone@14.7.77/build/Tone.js"></script>
+<link rel="stylesheet" href="css/styles.css">
 </head>
 <body>
-  <p>Redirecting to <a href="melodymatch.html">melodymatch.html</a>...</p>
+<div id="app">
+  <header class="topbar">
+    <div class="logo">
+      <div class="logo-glyph">M♪</div>
+      <span class="logo-name">MelodyMatch</span>
+      <span class="logo-tag">// scale detector</span>
+    </div>
+    <div class="topbar-right" id="statusBar">STANDBY</div>
+  </header>
+
+  <main>
+
+    <!-- ── IDLE ── -->
+    <div id="screen-idle" class="screen active">
+      <div class="hero">
+        <div class="hero-label">pitch detection active</div>
+        <h1>Hum a melody.<br><span>Find your sound.</span></h1>
+        <p>Sing or play a phrase. We'll detect the notes, match them against 15 scales, and suggest chord progressions for every mood.</p>
+
+        <div class="record-wrap">
+          <div class="record-ring"></div>
+          <div class="record-ring"></div>
+          <div class="record-ring"></div>
+          <button class="record-btn" id="startBtn">
+            <svg class="mic-svg" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+              <path d="M12 1a4 4 0 0 1 4 4v7a4 4 0 0 1-8 0V5a4 4 0 0 1 4-4zm-1 19.93V23h2v-2.07A9 9 0 0 0 21 12h-2a7 7 0 0 1-14 0H3a9 9 0 0 0 8 8.93z"/>
+            </svg>
+          </button>
+          <span class="record-hint">tap to record</span>
+        </div>
+
+        <div class="features">
+          <div class="feat-pill"><div class="feat-pill-dot"></div> 15 scales</div>
+          <div class="feat-pill"><div class="feat-pill-dot"></div> Key detection</div>
+          <div class="feat-pill"><div class="feat-pill-dot"></div> Live playback</div>
+          <div class="feat-pill"><div class="feat-pill-dot"></div> Chord progressions</div>
+        </div>
+        <button class="demo-btn" id="demoBtn">or build a melody without mic →</button>
+      </div>
+
+      <!-- Saved melodies -->
+      <div class="saved-section" id="savedSection">
+        <div class="saved-section-header">
+          <span class="saved-section-title">saved melodies</span>
+        </div>
+        <div class="saved-list" id="savedList"></div>
+      </div>
+    </div>
+
+    <!-- ── NOTE BUILDER ── -->
+    <div id="screen-notebuilder" class="screen">
+      <div class="nb-screen">
+        <div class="rec-top">
+          <div>
+            <h2 class="nb-title">Build your melody</h2>
+            <p class="nb-sub">Click notes to add them to your sequence</p>
+          </div>
+          <button class="stop-btn" id="nbBackBtn">← back</button>
+        </div>
+
+        <div class="nb-roll-wrap">
+          <div class="nb-roll-header">
+            <span class="trail-label">piano roll <span id="nbCount" style="color:var(--text2)">0 notes</span></span>
+            <div class="nb-roll-controls">
+              <span class="detected-label">bpm</span>
+              <button class="inst-btn" id="nbBpmDown">−</button>
+              <span class="nb-octave-label" id="nbBpmLabel">100</span>
+              <button class="inst-btn" id="nbBpmUp">+</button>
+              <span class="detected-label" style="margin-left:12px">bars</span>
+              <button class="inst-btn" id="nbBarsDown">−</button>
+              <span class="nb-octave-label" id="nbBarsLabel">4</span>
+              <button class="inst-btn" id="nbBarsUp">+</button>
+            </div>
+            <button class="nb-clear-btn" id="nbClearBtn">clear</button>
+          </div>
+          <div class="nb-roll-outer">
+            <div class="nb-roll-pitch-labels" id="nbPitchLabels"></div>
+            <div class="nb-roll-scroll">
+              <canvas id="nbRollCanvas"></canvas>
+            </div>
+          </div>
+          <p class="nb-roll-hint">Click keyboard to add notes · Drag notes left/right to reposition · Click a note to remove it</p>
+        </div>
+
+        <div class="nb-keyboard-wrap">
+          <div class="nb-keyboard" id="nbKeyboard"></div>
+          <div class="nb-octave-row">
+            <span class="detected-label">octave</span>
+            <button class="inst-btn" id="nbOctDown">−</button>
+            <span class="nb-octave-label" id="nbOctaveLabel">4</span>
+            <button class="inst-btn" id="nbOctUp">+</button>
+            <span class="detected-label" style="margin-left:16px">instrument</span>
+            <button class="inst-btn active" data-inst="piano">Piano</button>
+            <button class="inst-btn" data-inst="guitar">Guitar</button>
+            <button class="inst-btn" data-inst="strings">Strings</button>
+            <button class="inst-btn" data-inst="bass">Bass</button>
+            <button class="inst-btn" data-inst="flute">Flute</button>
+          </div>
+        </div>
+
+        <div class="nb-bottom-row">
+          <button class="nb-play-seq-btn" id="nbPlaySeqBtn" disabled>▶  play sequence</button>
+          <button class="save-melody-btn" id="nbSaveMelodyBtn" disabled>✦ save</button>
+          <button class="nb-analyse-btn" id="nbAnalyseBtn" disabled>Analyse melody →</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── RECORDING ── -->
+    <div id="screen-recording" class="screen">
+      <div class="rec-screen">
+        <div class="rec-top">
+          <div class="rec-indicator">
+            <div class="rec-dot"></div>
+            <span class="rec-text">recording</span>
+            <span class="rec-timer" id="recTimer">0:00</span>
+          </div>
+          <button class="stop-btn" id="stopBtn">■ stop &amp; analyse</button>
+        </div>
+
+        <div class="waveform-panel">
+          <div class="waveform-label">live waveform</div>
+          <canvas id="waveformCanvas" height="90"></canvas>
+          <div class="rec-level-row">
+            <span class="rec-level-label">level</span>
+            <div class="rec-level-bar"><div class="rec-level-fill" id="recLevelFill"></div></div>
+          </div>
+        </div>
+
+        <div class="clip-info">
+          <div class="clip-info-icon">♪</div>
+          <div class="clip-info-text">
+            <div class="clip-info-title" id="recHint">Sing or hum your melody — recording in progress</div>
+            <div class="clip-info-sub">Audio is captured in full · Pitch analysis runs after you stop</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── MIC REVIEW ── -->
+    <div id="screen-mic-review" class="screen">
+      <div class="mr-screen">
+        <div class="mr-header">
+          <div>
+            <h2 class="mr-title">Review your melody</h2>
+            <p class="mr-sub" id="mrSub">Detected notes · adjust timing or pitch before analysing</p>
+          </div>
+          <button class="stop-btn" id="mrBackBtn">← re-record</button>
+        </div>
+
+        <!-- Takes strip -->
+        <div class="mr-takes-bar">
+          <span class="mr-takes-label">takes</span>
+          <div id="mrTakeDots"></div>
+          <button class="mr-add-take-btn" id="mrAddTakeBtn">+ add take</button>
+        </div>
+        <div class="mr-take-thumbs" id="mrTakeThumbs"></div>
+
+        <!-- Piano roll -->
+        <div class="mr-roll-wrap">
+          <div class="mr-roll-header">
+            <span class="trail-label">detected melody <span id="mrNoteCount" style="color:var(--text2)">0 notes</span></span>
+            <div class="mr-bpm-row">
+              <span class="detected-label">bpm</span>
+              <button class="inst-btn" id="mrBpmDown">−</button>
+              <span class="nb-octave-label" id="mrBpmLabel">100</span>
+              <button class="inst-btn" id="mrBpmUp">+</button>
+            </div>
+            <button class="nb-clear-btn" id="mrResetBtn" style="margin-left:auto">reset</button>
+          </div>
+          <div class="mr-roll-outer">
+            <div class="mr-roll-pitch-labels" id="mrPitchLabels"></div>
+            <div class="mr-roll-scroll" id="mrRollScroll">
+              <canvas id="mrRollCanvas"></canvas>
+            </div>
+          </div>
+          <p class="mr-roll-hint">Drag notes left/right to reposition · Drag right edge to resize · Click to remove · Pitch row = exact MIDI note</p>
+        </div>
+
+        <div class="mr-bottom-row">
+          <button class="nb-play-seq-btn" id="mrPlayBtn" disabled>▶  play</button>
+          <button class="nb-analyse-btn" id="mrAnalyseBtn" disabled>Analyse melody →</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── PROCESSING ── -->
+    <div id="screen-processing" class="screen">
+      <div class="processing-screen">
+        <div class="proc-anim">
+          <div class="proc-bar"></div>
+          <div class="proc-bar"></div>
+          <div class="proc-bar"></div>
+          <div class="proc-bar"></div>
+          <div class="proc-bar"></div>
+        </div>
+        <p class="proc-title">Analyzing melody...</p>
+        <p class="proc-sub">Matching pitch classes · Scoring scale profiles</p>
+        <p class="proc-step" id="procStep"></p>
+      </div>
+    </div>
+
+    <!-- ── RESULTS ── -->
+    <div id="screen-results" class="screen">
+      <div class="results-screen">
+        <div class="results-top">
+          <div>
+            <h2 class="results-title" id="resultsTitle">Best match: <span id="bestMatchName">—</span></h2>
+            <p class="results-sub" id="resultsSub">—</p>
+          </div>
+          <div style="display:flex;gap:10px;align-items:center">
+            <button class="save-melody-btn" id="saveMelodyBtn">✦ save melody</button>
+            <button class="re-record-btn" id="reRecordBtn">↩ record again</button>
+          </div>
+        </div>
+
+        <div class="detected-bar" id="detectedBar"></div>
+
+        <div class="instrument-bar" id="instrumentBar">
+          <span class="detected-label">instrument</span>
+          <button class="inst-btn active" data-inst="piano">Piano</button>
+          <button class="inst-btn" data-inst="guitar">Guitar</button>
+          <button class="inst-btn" data-inst="strings">Strings</button>
+          <button class="inst-btn" data-inst="bass">Bass</button>
+          <button class="inst-btn" data-inst="flute">Flute</button>
+          <button class="melody-toggle active" id="melodyToggle" style="margin-left:auto">♪ melody on</button>
+        </div>
+
+        <div class="scale-cards" id="scaleCards"></div>
+      </div>
+    </div>
+
+  </main>
+</div>
+
+<!-- Scripts: load in dependency order -->
+<script src="js/constants.js"></script>
+<script src="js/music.js"></script>
+<script src="js/audio.js"></script>
+<script src="js/playback.js"></script>
+<script src="js/mic-review.js"></script>
+<script src="js/note-builder.js"></script>
+<script src="js/results.js"></script>
+<script src="js/app.js"></script>
 </body>
 </html>

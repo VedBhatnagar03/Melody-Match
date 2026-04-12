@@ -392,12 +392,13 @@ async function edTogglePlay(isExport = false) {
   edBars.forEach((bar, i) => {
     const tStartSec = bar.beatOffset * secPerBeat;
     const chordSampler = chordHandle.sampler;
-    const bassNote = Tone.Frequency(Math.min(bar.root + 36, 96), 'midi').toNote();
-    const midNotes = bar.intervals.map(o => Tone.Frequency(Math.min(bar.root + 48 + (o >= 12 ? o - 12 : o), 96), 'midi').toNote());
+    const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
+    const bassNote = Tone.Frequency(clamp(bar.root + 36, 21, 60), 'midi').toNote();
+    const midNotes = bar.intervals.map(o => Tone.Frequency(clamp(bar.root + 48 + (o >= 12 ? o - 12 : o), 36, 84), 'midi').toNote());
     const coreIntervals = bar.intervals.slice(0, 3);
     const upperNotes = [
-      ...coreIntervals.slice(1).map(o => Tone.Frequency(Math.min(bar.root + 60 + o, 108), 'midi').toNote()),
-      Tone.Frequency(Math.min(bar.root + 72, 108), 'midi').toNote(),
+      ...coreIntervals.slice(1).map(o => Tone.Frequency(clamp(bar.root + 60 + o, 48, 108), 'midi').toNote()),
+      Tone.Frequency(clamp(bar.root + 72, 60, 108), 'midi').toNote(),
     ];
     Tone.Transport.schedule((time) => {
       chordSampler.triggerAttackRelease(bassNote, barLen * 0.93, time);

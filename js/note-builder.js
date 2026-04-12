@@ -599,11 +599,8 @@ document.getElementById('nbKeyboard').addEventListener('click', e => {
 document.getElementById('nbPlaySeqBtn').addEventListener('click', nbPlaySequence);
 
 document.getElementById('nbClearBtn').addEventListener('click', () => {
+  nbStopSequence(); // cancels all pending timeouts first
   nbSequence = [];
-  nbSeqPlaying = false;
-  nbPlayhead = -1;
-  document.getElementById('nbPlaySeqBtn').textContent = '▶  play sequence';
-  document.getElementById('nbPlaySeqBtn').classList.remove('playing');
   nbUpdateUI();
   nbDrawRoll();
 });
@@ -657,5 +654,6 @@ document.getElementById('nbAnalyseBtn').addEventListener('click', () => {
 });
 
 document.getElementById('nbBackBtn').addEventListener('click', () => {
+  nbStopSequence(); // stop any active playback before leaving
   showScreen('idle');
 });

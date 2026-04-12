@@ -99,9 +99,8 @@ document.getElementById('reRecordBtn').addEventListener('click', () => {
 });
 
 document.getElementById('demoBtn').addEventListener('click', () => {
+  nbStopSequence(); // cancel any active playback timeouts
   nbSequence = [];
-  nbSeqPlaying = false;
-  nbPlayhead = -1;
   currentSavedIdx = -1;
   nbUpdateUI();
   nbDrawRoll();

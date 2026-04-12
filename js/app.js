@@ -144,6 +144,8 @@ document.getElementById('mrResetBtn').addEventListener('click', () => {
   } else {
     mrSequence = [];
   }
+  // Reset clears undo history (we're back to the source of truth)
+  mrUndoStack = []; mrRedoStack = [];
   mrDrawRoll();
   mrUpdateUI();
 });
@@ -182,6 +184,10 @@ document.getElementById('mrPlayRawBtn').addEventListener('click', () => {
     mrRawAudioElement = null;
     btn.textContent = '🎤 play raw mic';
   };
+  mrRawAudioElement.onerror = () => {
+    mrRawAudioElement = null;
+    btn.textContent = '🎤 play raw mic';
+  };
 });
 
 async function mrStartPlaybackFrom(startBeat) {
@@ -203,10 +209,13 @@ async function mrStartPlaybackFrom(startBeat) {
   // Schedule melody notes
   const sorted = [...mrSequence].sort((a, b) => a.beat - b.beat);
   sorted.forEach(n => {
+    // Skip notes that finish before the seek point
     if (n.beat + (n.dur ?? 0.5) <= startBeat) return;
-    const t     = now + (n.beat - startBeat) * secPerBeat;
+    const offsetSec = (n.beat - startBeat) * secPerBeat;
+    // Skip notes whose start is already in the past (with 30ms grace)
+    if (offsetSec < -0.03) return;
     const dur   = n.dur * secPerBeat * 0.88;
-    const delay = Math.max(0, (t - Tone.now()) * 1000);
+    const delay = Math.max(0, offsetSec * 1000);
     setTimeout(() => {
       if (playGeneration !== gen) return;
       mel.triggerAttackRelease(Tone.Frequency(n.midi, 'midi').toNote(), dur, Tone.now() + 0.01);
@@ -260,6 +269,21 @@ function mrSeekPlayback(beat) {
   if (playGeneration > 0 && mrPlayhead >= 0) mrStartPlaybackFrom(beat);
 }
 
+// Stored start beat for next NB play (set by scrubbing while paused)
+let nbStartBeat = 0;
+
+// Called when user drags the NB playhead and releases
+function nbSeekPlayback(beat) {
+  nbPlayhead = beat; // park visually first so stop() sees it >= 0
+  if (nbSeqPlaying) {
+    nbStopSequence(); // cancels play; nbStopSequence will read nbPlayhead and set nbStartBeat
+    nbPlaySequence(beat);
+  } else {
+    nbStartBeat = beat;
+    nbDrawRoll();
+  }
+}
+
 document.getElementById('mrPlayBtn').addEventListener('click', () => mrStartPlaybackFrom(mrPlayhead >= 0 ? mrPlayhead : 0));
 
 document.getElementById('mrCopyBtn').addEventListener('click', () => {
@@ -278,7 +302,13 @@ document.addEventListener('keydown', e => {
   if (!mrScreen || !mrScreen.classList.contains('active')) return;
   if (e.target.tagName === 'INPUT') return;
 
-  if (e.key === 'a' && (e.ctrlKey || e.metaKey)) {
+  if ((e.key === 'z' || e.key === 'Z') && (e.ctrlKey || e.metaKey)) {
+    e.preventDefault();
+    if (e.shiftKey) mrRedo(); else mrUndo();
+  } else if ((e.key === 'y' || e.key === 'Y') && (e.ctrlKey || e.metaKey)) {
+    e.preventDefault();
+    mrRedo();
+  } else if (e.key === 'a' && (e.ctrlKey || e.metaKey)) {
     e.preventDefault();
     mrSelected = new Set(mrSequence.map((_, i) => i));
     mrDrawRoll();
@@ -293,6 +323,7 @@ document.addEventListener('keydown', e => {
   } else if (e.key === 'Delete' || e.key === 'Backspace') {
     if (mrSelected.size > 0) {
       e.preventDefault();
+      mrPushUndo();
       const toDelete = [...mrSelected].sort((a, b) => b - a);
       toDelete.forEach(i => mrSequence.splice(i, 1));
       mrSelected.clear();
@@ -373,6 +404,8 @@ document.getElementById('instrumentBar-chords')?.addEventListener('click', e => 
 
 const reverbSlider = document.getElementById('reverbSlider');
 if (reverbSlider) {
+  // Sync code default to slider's initial HTML value on load
+  globalReverbAmount = parseInt(reverbSlider.value) / 100;
   reverbSlider.addEventListener('input', e => {
     globalReverbAmount = parseInt(e.target.value) / 100;
   });
@@ -396,9 +429,25 @@ const STORAGE_KEY = 'melodymatch_saved';
 // Index of the currently loaded saved melody (-1 = unsaved / new)
 let currentSavedIdx = -1;
 
+const STORAGE_VERSION = 1;
+
 function savedLoad() {
-  try { return JSON.parse(localStorage.getItem(STORAGE_KEY)) || []; }
-  catch(e) { return []; }
+  try {
+    const raw = JSON.parse(localStorage.getItem(STORAGE_KEY)) || [];
+    // Filter out entries from future/incompatible versions, warn on mismatch
+    return raw.filter(m => {
+      if (m.version === undefined) {
+        // Legacy entry (no version field) — migrate by adding version
+        m.version = STORAGE_VERSION;
+        return true;
+      }
+      if (m.version > STORAGE_VERSION) {
+        console.warn('MelodyMatch: skipping saved entry with unknown version', m.version);
+        return false;
+      }
+      return true;
+    });
+  } catch(e) { return []; }
 }
 
 function savedWrite(list) {
@@ -455,6 +504,7 @@ function savedLoadMelody(idx) {
     nbBars = m.bars || 4;
     document.getElementById('nbBpmLabel').textContent  = nbBpm;
     document.getElementById('nbBarsLabel').textContent = nbBars;
+    nbUndoStack = []; nbRedoStack = []; // fresh load = fresh history
     nbUpdateUI();
     nbDrawRoll();
     showScreen('notebuilder');
@@ -507,16 +557,17 @@ function savedSaveFromResults() {
 
   const doSave = (name) => {
     const entry = {
+      version: STORAGE_VERSION,
       name,
       date: new Date().toLocaleDateString(),
       noteCount: detectedPitches.length,
-      bpm: isBuilder ? nbBpm : (window._lastBpm || 100),
+      bpm: isBuilder ? nbBpm : (_lastResults.bpm || 100),
       bars: isBuilder ? nbBars : 4,
       source: pitchSource || 'mic',
       pitches: detectedPitches.map(p => ({ ...p })),
       sequence: isBuilder ? nbSequence.map(n => ({ ...n })) : null,
-      chords: window._lastBars ? window._lastBars.map(b => ({...b})) : null,
-      scale: window._lastScaleName || null,
+      chords: _lastResults.bars ? _lastResults.bars.map(b => ({...b})) : null,
+      scale: _lastResults.scaleName || null,
     };
     const freshList = savedLoad();
     if (isOverwrite) {
@@ -537,7 +588,8 @@ function savedSaveFromResults() {
     // Silent overwrite — no modal
     doSave(list[currentSavedIdx].name);
   } else {
-    const defaultName = document.getElementById('bestMatchName').textContent || 'My Melody';
+    const bestMatchEl = document.getElementById('bestMatchName');
+    const defaultName = bestMatchEl?.textContent?.trim() || 'My Melody';
     savedShowModal(defaultName, doSave);
   }
 }
@@ -549,6 +601,7 @@ function savedSaveFromBuilder() {
 
   const doSave = (name) => {
     const entry = {
+      version: STORAGE_VERSION,
       name,
       date: new Date().toLocaleDateString(),
       noteCount: nbSequence.length,
@@ -596,14 +649,15 @@ document.getElementById('editMelodyBtn').addEventListener('click', () => {
     src = mrSequence; srcBpm = mrBpm; srcBars = mrBars;
   } else if (detectedPitches && detectedPitches.length > 0) {
     // Convert raw pitches to sequence format
-    const bpm = window._lastBpm || 100;
+    const bpm = _lastResults.bpm || 100;
     const spb = 60 / bpm;
     src = detectedPitches.map(p => ({
       midi: p.midi, pc: p.pc, freq: p.freq,
       beat: p.beat ?? ((p.time || 0) / 1000 / spb),
       dur:  p.dur  ?? 1,
     }));
-    srcBpm = bpm; srcBars = 4;
+    srcBpm  = bpm;
+    srcBars = (_lastResults.bars && _lastResults.bars.length > 0) ? _lastResults.bars.length : 4;
   }
 
   if (src && src.length > 0) {
@@ -617,6 +671,14 @@ document.getElementById('editMelodyBtn').addEventListener('click', () => {
   }
   showScreen('notebuilder');
 });
+
+// Undo/redo buttons for notebuilder
+document.getElementById('nbUndoBtn').addEventListener('click', nbUndo);
+document.getElementById('nbRedoBtn').addEventListener('click', nbRedo);
+
+// Undo/redo buttons for mic-review
+document.getElementById('mrUndoBtn').addEventListener('click', mrUndo);
+document.getElementById('mrRedoBtn').addEventListener('click', mrRedo);
 
 // Copy/paste buttons for notebuilder
 document.getElementById('nbCopyBtn').addEventListener('click', () => {
@@ -635,7 +697,13 @@ document.addEventListener('keydown', e => {
   if (!nbScreen || !nbScreen.classList.contains('active')) return;
   if (e.target.tagName === 'INPUT') return;
 
-  if (e.key === 'a' && (e.ctrlKey || e.metaKey)) {
+  if ((e.key === 'z' || e.key === 'Z') && (e.ctrlKey || e.metaKey)) {
+    e.preventDefault();
+    if (e.shiftKey) nbRedo(); else nbUndo();
+  } else if ((e.key === 'y' || e.key === 'Y') && (e.ctrlKey || e.metaKey)) {
+    e.preventDefault();
+    nbRedo();
+  } else if (e.key === 'a' && (e.ctrlKey || e.metaKey)) {
     e.preventDefault();
     nbSelected = new Set(nbSequence.map((_, i) => i));
     nbDrawRoll();
@@ -652,6 +720,7 @@ document.addEventListener('keydown', e => {
   } else if (e.key === 'Delete' || e.key === 'Backspace') {
     if (nbSelected.size > 0) {
       e.preventDefault();
+      nbPushUndo();
       const toDelete = [...nbSelected].sort((a, b) => b - a);
       toDelete.forEach(i => nbSequence.splice(i, 1));
       nbSelected.clear();
@@ -668,11 +737,12 @@ document.getElementById('nbSaveMelodyBtn').addEventListener('click', savedSaveFr
 document.getElementById('nbMetronomeBtn').addEventListener('click', () => {
   nbMetronomeEnabled = !nbMetronomeEnabled;
   const btn = document.getElementById('nbMetronomeBtn');
-  btn.style.borderColor = nbMetronomeEnabled ? '#fbbf24' : '';
-  btn.style.color       = nbMetronomeEnabled ? '#fbbf24' : '';
-  btn.style.background  = nbMetronomeEnabled ? 'rgba(251,191,36,0.15)' : '';
-  btn.textContent       = nbMetronomeEnabled ? '♩ metronome on' : '♩ metronome';
+  btn.classList.toggle('active', nbMetronomeEnabled);
+  btn.title = nbMetronomeEnabled ? 'Metronome on (click to turn off)' : 'Toggle metronome';
 });
+
+// Module-level cache for last analysis results (avoids window.* global pollution)
+const _lastResults = {};  // { bpm, bars, scaleName }
 
 // Capture bpm from results for use when saving
 const _origBuildResults = buildResults;
@@ -683,9 +753,9 @@ buildResults = function() {
     const best = rankScales(pcs)[0];
     const r = buildBarChords(detectedPitches, best.scale.profile, best.root, pitchSource === 'builder' ? nbBpm : null, best.scale.key);
     if (r) {
-      window._lastBpm = r.bpm;
-      window._lastBars = r.bars;
-      window._lastScaleName = `${pcToName(best.root)} ${best.scale.name}`;
+      _lastResults.bpm       = r.bpm;
+      _lastResults.bars      = r.bars;
+      _lastResults.scaleName = `${pcToName(best.root)} ${best.scale.name}`;
     }
   } catch(e) {}
 };

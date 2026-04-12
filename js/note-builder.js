@@ -18,6 +18,7 @@ const NB_RESIZE_HANDLE = 8;
 let nbSelected  = new Set(); // indices of selected notes
 let nbClipboard = [];        // [{midi,pc,freq,beat,dur}]
 let nbBoxSel    = null;      // {startX,startY,endX,endY} while rubber-banding
+let nbBoxShift  = false;     // was Shift held when box-drag started?
 
 // Metronome
 let nbMetronomeEnabled = false;
@@ -31,11 +32,40 @@ const NB_BLACKS = [
   { name:'F#', semi:6, after:3 }, { name:'G#', semi:8, after:4 }, { name:'A#', semi:10, after:5 },
 ];
 
+// ── Undo / redo ──
+let nbUndoStack = []; // array of deep-copied nbSequence snapshots
+let nbRedoStack = [];
+
+function nbPushUndo() {
+  nbUndoStack.push(nbSequence.map(n => ({ ...n })));
+  if (nbUndoStack.length > 10) nbUndoStack.shift();
+  nbRedoStack = []; // new action clears redo
+}
+
+function nbUndo() {
+  if (nbUndoStack.length === 0) return;
+  nbRedoStack.push(nbSequence.map(n => ({ ...n })));
+  nbSequence = nbUndoStack.pop();
+  nbSelected.clear();
+  nbUpdateUI();
+  nbDrawRoll();
+}
+
+function nbRedo() {
+  if (nbRedoStack.length === 0) return;
+  nbUndoStack.push(nbSequence.map(n => ({ ...n })));
+  nbSequence = nbRedoStack.pop();
+  nbSelected.clear();
+  nbUpdateUI();
+  nbDrawRoll();
+}
+
 // ── Canvas state ──
 let nbCanvas, nbCtx;
-let nbDragging = null;
-let nbPlayhead = -1;
-let nbTimeouts = []; // tracked so they can be cancelled on stop
+let nbDragging  = null;
+let nbScrubbing = false;
+let nbPlayhead  = -1;
+let nbTimeouts  = []; // tracked so they can be cancelled on stop
 
 function nbGetRows() {
   if (nbSequence.length === 0) return [];
@@ -144,6 +174,14 @@ function nbDrawRoll() {
     ctx.strokeStyle = '#ff4757';
     ctx.lineWidth   = 2;
     ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke();
+    // Draggable handle triangle at top
+    ctx.fillStyle = '#ff4757';
+    ctx.beginPath();
+    ctx.moveTo(x - 7, 0);
+    ctx.lineTo(x + 7, 0);
+    ctx.lineTo(x, 10);
+    ctx.closePath();
+    ctx.fill();
   }
 
   // Update pitch labels sidebar
@@ -164,6 +202,12 @@ function nbDrawRoll() {
     lbl.textContent = pcToName(midi % 12) + (Math.floor(midi / 12) - 1);
     sidebar.appendChild(lbl);
   });
+}
+
+// ── Playhead hit test (within 10px of the line) ──
+function nbHitPlayhead(x) {
+  if (nbPlayhead < 0) return false;
+  return Math.abs(x - nbPlayhead * NB_BEAT_W) <= 10;
 }
 
 // ── Hit test ──
@@ -222,6 +266,14 @@ function nbUpdateUI() {
   document.getElementById('nbAnalyseBtn').disabled = nbSequence.length < 4;
   document.getElementById('nbPlaySeqBtn').disabled = nbSequence.length === 0;
   document.getElementById('nbSaveMelodyBtn').disabled = nbSequence.length === 0;
+  // Show playhead at beat 0 as soon as there are notes; hide when sequence is empty
+  if (nbSequence.length > 0 && nbPlayhead < 0) {
+    nbPlayhead = 0;
+    if (typeof nbStartBeat !== 'undefined') nbStartBeat = 0;
+  } else if (nbSequence.length === 0) {
+    nbPlayhead = -1;
+    if (typeof nbStartBeat !== 'undefined') nbStartBeat = 0;
+  }
 }
 
 function updateOctaveLabel() {
@@ -239,11 +291,20 @@ function nbCanvasXY(e) {
 
 function nbOnMouseDown(e) {
   const { x, y } = nbCanvasXY(e);
+
+  // 0 — playhead scrub
+  if (nbHitPlayhead(x)) {
+    nbScrubbing = true;
+    nbCanvas.style.cursor = 'col-resize';
+    return;
+  }
+
   const hit = nbHitNote(x, y);
 
   if (!hit) {
     // Start box selection on empty area
-    if (!e.shiftKey) nbSelected.clear();
+    nbBoxShift = e.shiftKey;
+    if (!nbBoxShift) nbSelected.clear();
     nbBoxSel = { startX: x, startY: y, endX: x, endY: y };
     nbDrawRoll();
     return;
@@ -260,6 +321,7 @@ function nbOnMouseDown(e) {
   }
 
   if (hit.mode === 'resize') {
+    nbPushUndo();
     nbDragging = { noteIdx: hit.idx, mode: 'resize', startX: x, startY: y, origBeat: n.beat, origDur: n.dur ?? 1 };
     nbCanvas.style.cursor = 'ew-resize';
     nbDrawRoll();
@@ -280,6 +342,7 @@ function nbOnMouseDown(e) {
     origMidis[i] = nbSequence[i].midi;
   });
 
+  nbPushUndo();
   nbDragging = { noteIdx: hit.idx, mode: 'move', startX: x, startY: y, origBeat: n.beat, origDur: n.dur ?? 1, origMidi: n.midi, origBeats, origMidis };
   nbCanvas.style.cursor = 'grabbing';
   nbDrawRoll();
@@ -287,6 +350,12 @@ function nbOnMouseDown(e) {
 
 function nbOnMouseMove(e) {
   const { x, y } = nbCanvasXY(e);
+
+  if (nbScrubbing) {
+    nbPlayhead = Math.max(0, Math.min(nbTotalBeats(), x / NB_BEAT_W));
+    nbDrawRoll();
+    return;
+  }
 
   if (nbBoxSel) {
     nbBoxSel.endX = x;
@@ -297,7 +366,7 @@ function nbOnMouseMove(e) {
     const bx2 = Math.max(nbBoxSel.startX, x);
     const by1 = Math.min(nbBoxSel.startY, y);
     const by2 = Math.max(nbBoxSel.startY, y);
-    nbSelected.clear();
+    if (!nbBoxShift) nbSelected.clear();
     nbSequence.forEach((n, i) => {
       const r = rows.indexOf(n.midi);
       if (r < 0) return;
@@ -313,6 +382,7 @@ function nbOnMouseMove(e) {
   }
 
   if (!nbDragging) {
+    if (nbHitPlayhead(x)) { nbCanvas.style.cursor = 'col-resize'; return; }
     const hit = nbHitNote(x, y);
     nbCanvas.style.cursor = !hit ? 'crosshair' : hit.mode === 'resize' ? 'ew-resize' : 'grab';
     return;
@@ -340,6 +410,13 @@ function nbOnMouseMove(e) {
 }
 
 function nbOnMouseUp(e) {
+  if (nbScrubbing) {
+    nbScrubbing = false;
+    nbCanvas.style.cursor = 'crosshair';
+    if (nbPlayhead >= 0) nbSeekPlayback(nbPlayhead);
+    return;
+  }
+
   if (nbBoxSel) {
     nbBoxSel = null;
     nbDrawRoll();
@@ -368,6 +445,7 @@ function nbCopySelected() {
 
 function nbPasteClipboard() {
   if (nbClipboard.length === 0) return;
+  nbPushUndo();
   const maxBeat = nbSequence.length > 0 ? Math.max(...nbSequence.map(n => n.beat + (n.dur ?? 1))) : 0;
   const insertBeat = nbSnapBeat(maxBeat);
   nbSelected.clear();
@@ -392,7 +470,9 @@ function nbStopSequence() {
   nbTimeouts.forEach(id => clearTimeout(id));
   nbTimeouts = [];
   nbSeqPlaying = false;
-  nbPlayhead = -1;
+  // Park playhead at current position (or beat 0) so it stays visible and draggable
+  if (nbPlayhead < 0) nbPlayhead = 0;
+  if (typeof nbStartBeat !== 'undefined') nbStartBeat = nbPlayhead;
   playGeneration++;
   const btn = document.getElementById('nbPlaySeqBtn');
   btn.textContent = '▶  play sequence';
@@ -400,9 +480,7 @@ function nbStopSequence() {
   nbDrawRoll();
 }
 
-async function nbPlaySequence() {
-  const btn = document.getElementById('nbPlaySeqBtn');
-  if (nbSeqPlaying) { nbStopSequence(); return; }
+async function nbPlaySequence(startBeat = 0) {
   if (nbSequence.length === 0) return;
 
   // Cancel any lingering timeouts before starting fresh
@@ -412,6 +490,7 @@ async function nbPlaySequence() {
   await Tone.start();
   const { sampler: s } = await loadMelodySampler(melodyInstrument);
 
+  const btn = document.getElementById('nbPlaySeqBtn');
   nbSeqPlaying = true;
   btn.textContent = '■  stop';
   btn.classList.add('playing');
@@ -419,11 +498,16 @@ async function nbPlaySequence() {
   const secPerBeat = 60 / nbBpm;
   const sorted = [...nbSequence].sort((a, b) => a.beat - b.beat);
   const t0 = performance.now();
-  const totalSec = (nbTotalBeats()) * secPerBeat;
+  const totalSec   = nbTotalBeats() * secPerBeat;
+  const startSec   = startBeat * secPerBeat;
   const gen = ++playGeneration;
 
   sorted.forEach(p => {
-    const delay = p.beat * secPerBeat * 1000;
+    // Skip notes that finish before the start point
+    if (p.beat + (p.dur ?? 1) <= startBeat) return;
+    const offsetSec = (p.beat - startBeat) * secPerBeat;
+    if (offsetSec < -0.03) return;
+    const delay = Math.max(0, offsetSec * 1000);
     nbTimeouts.push(setTimeout(() => {
       if (playGeneration !== gen) return;
       s.triggerAttackRelease(
@@ -442,14 +526,15 @@ async function nbPlaySequence() {
     }).toDestination();
     clickSynth.volume.value = -6;
     const totalBeats = nbTotalBeats();
-    for (let b = 0; b < totalBeats; b++) {
+    for (let b = Math.ceil(startBeat); b < totalBeats; b++) {
       const isDownbeat = b % 4 === 0;
+      const delay = (b - startBeat) * secPerBeat * 1000;
       nbTimeouts.push(setTimeout(() => {
         if (playGeneration !== gen) return;
         clickSynth.triggerAttackRelease(isDownbeat ? 'C2' : 'C3', '32n', Tone.now() + 0.01);
-      }, b * secPerBeat * 1000));
+      }, delay));
     }
-    nbTimeouts.push(setTimeout(() => { try { clickSynth.dispose(); } catch(e) {} }, (totalSec + 0.5) * 1000));
+    nbTimeouts.push(setTimeout(() => { try { clickSynth.dispose(); } catch(e) {} }, (totalSec - startSec + 0.5) * 1000));
   }
 
   function animatePlayhead() {
@@ -457,15 +542,16 @@ async function nbPlaySequence() {
     const nbScreen = document.getElementById('screen-notebuilder');
     if (!nbScreen || !nbScreen.classList.contains('active')) {
       // Screen hidden — stop cleanly without drawing
-      nbSeqPlaying = false; nbPlayhead = -1; return;
+      nbSeqPlaying = false; return;
     }
     const elapsed = (performance.now() - t0) / 1000;
-    nbPlayhead = elapsed / secPerBeat;
+    nbPlayhead = startBeat + elapsed / secPerBeat;
     nbDrawRoll();
-    if (elapsed < totalSec + 0.5) requestAnimationFrame(animatePlayhead);
+    if (elapsed < totalSec - startSec + 0.5) requestAnimationFrame(animatePlayhead);
     else {
       nbSeqPlaying = false;
-      nbPlayhead = -1;
+      nbPlayhead = 0; // return to start after full playthrough
+      if (typeof nbStartBeat !== 'undefined') nbStartBeat = 0;
       btn.textContent = '▶  play sequence';
       btn.classList.remove('playing');
       nbDrawRoll();
@@ -558,6 +644,7 @@ document.addEventListener('keydown', e => {
   const nbScreen = document.getElementById('screen-notebuilder');
   if (!nbScreen || !nbScreen.classList.contains('active')) return;
   _nbKeysHeld.add(midi);
+  nbPushUndo();
   nbAddNoteByMidi(midi);
   nbPlayNote(midi);
   // Light up the key
@@ -592,13 +679,20 @@ document.getElementById('nbKeyboard').addEventListener('click', e => {
   const key = e.target.closest('.nb-key');
   if (!key || !key.dataset.midi) return;
   const midi = +key.dataset.midi;
+  nbPushUndo();
   nbAddNoteByMidi(midi);
   nbPlayNote(midi);
 });
 
-document.getElementById('nbPlaySeqBtn').addEventListener('click', nbPlaySequence);
+document.getElementById('nbPlaySeqBtn').addEventListener('click', () => {
+  if (nbSeqPlaying) { nbStopSequence(); return; }
+  // Start from the parked playhead position (set by scrubbing), or beat 0
+  const start = (typeof nbStartBeat !== 'undefined' && nbStartBeat > 0) ? nbStartBeat : 0;
+  nbPlaySequence(start);
+});
 
 document.getElementById('nbClearBtn').addEventListener('click', () => {
+  nbPushUndo();
   nbStopSequence(); // cancels all pending timeouts first
   nbSequence = [];
   nbUpdateUI();
@@ -623,6 +717,7 @@ document.getElementById('nbBpmUp').addEventListener('click', () => {
 
 document.getElementById('nbBarsDown').addEventListener('click', () => {
   if (nbBars > 1) {
+    nbPushUndo();
     nbBars--;
     document.getElementById('nbBarsLabel').textContent = nbBars;
     nbSequence = nbSequence.filter(n => n.beat < nbTotalBeats());

@@ -2,6 +2,21 @@
    CONSTANTS  —  shared data, no logic
 ─────────────────────────────────────────────── */
 
+// ── Canvas roundRect polyfill (Firefox < 112, Safari < 15.4) ──
+if (typeof CanvasRenderingContext2D !== 'undefined' &&
+    !CanvasRenderingContext2D.prototype.roundRect) {
+  CanvasRenderingContext2D.prototype.roundRect = function(x, y, w, h, r) {
+    const R = Array.isArray(r) ? r[0] : (r || 0);
+    this.beginPath();
+    this.moveTo(x + R, y);
+    this.lineTo(x + w - R, y);       this.arcTo(x + w, y,     x + w, y + R,     R);
+    this.lineTo(x + w, y + h - R);   this.arcTo(x + w, y + h, x + w - R, y + h, R);
+    this.lineTo(x + R, y + h);       this.arcTo(x,     y + h, x,     y + h - R, R);
+    this.lineTo(x, y + R);           this.arcTo(x,     y,     x + R, y,         R);
+    this.closePath();
+  };
+}
+
 const NOTE_NAMES = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
 const freqToMidi = f => Math.round(12 * Math.log2(f / 440) + 69);
 const midiToPc   = m => ((m % 12) + 12) % 12;

@@ -29,6 +29,34 @@ let mrBoxSel = null;        // {startX, startY, endX, endY} while dragging
 let mrSelected = new Set(); // indices of selected notes
 let mrClipboard = [];       // copied notes [{midi,pc,beat,dur,conf}]
 
+// Undo / redo
+let mrUndoStack = [];
+let mrRedoStack = [];
+
+function mrPushUndo() {
+  mrUndoStack.push(mrSequence.map(n => ({ ...n })));
+  if (mrUndoStack.length > 10) mrUndoStack.shift();
+  mrRedoStack = [];
+}
+
+function mrUndo() {
+  if (mrUndoStack.length === 0) return;
+  mrRedoStack.push(mrSequence.map(n => ({ ...n })));
+  mrSequence = mrUndoStack.pop();
+  mrSelected.clear();
+  mrUpdateUI();
+  mrDrawRoll();
+}
+
+function mrRedo() {
+  if (mrRedoStack.length === 0) return;
+  mrUndoStack.push(mrSequence.map(n => ({ ...n })));
+  mrSequence = mrRedoStack.pop();
+  mrSelected.clear();
+  mrUpdateUI();
+  mrDrawRoll();
+}
+
 let MR_ROW_H         = 28;
 let MR_BEAT_W        = 54;
 const MR_RESIZE_HANDLE = 8;
@@ -351,6 +379,8 @@ function mrRenderTakes() {
       if (!isMerged && e.target.closest('.mr-take-del')) return;
       mrActiveTake = isMerged ? 'merged' : i;
       mrSequence = isMerged ? mrMergeTakes(mrTakes) : mrTakes[i].notes.map(n => ({ ...n }));
+      // Switching takes = fresh context; clear undo history to avoid cross-take confusion
+      mrUndoStack = []; mrRedoStack = [];
       mrRenderTakes();
       mrDrawRoll((isMerged || mrActiveTake === 'merged') ? null : i); // no faint highlighting on merged
       mrUpdateUI();
@@ -435,6 +465,7 @@ function mrInitFromDetected() {
 // ── Strict Quantization (Auto-Tune Timing) ──
 function mrAutoTuneSequence() {
   if (mrSequence.length === 0) return;
+  mrPushUndo();
   mrSequence.forEach(n => {
     n.beat = Math.round(n.beat * 2) / 2; // snap to 8th
     n.dur = Math.max(0.25, Math.round((n.dur || 0.5) * 2) / 2);
@@ -500,6 +531,7 @@ function mrCopySelected() {
 
 function mrPasteClipboard() {
   if (mrClipboard.length === 0) return;
+  mrPushUndo();
   const minBeat = Math.min(...mrClipboard.map(n => n.beat));
   // Paste after the last note in the sequence
   const pasteOffset = mrSequence.length > 0
@@ -530,6 +562,7 @@ function mrOnMouseDown(e) {
   // 2 — note hit
   const hit = mrHitNote(x, y);
   if (hit) {
+    mrPushUndo();
     // If clicking a selected note, move the whole selection
     if (mrSelected.has(hit.idx) && hit.mode === 'move' && mrSelected.size > 1) {
       mrDragging = { noteIdx: hit.idx, mode: 'moveSelection', startX: x, startY: y,

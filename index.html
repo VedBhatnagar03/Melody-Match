@@ -91,7 +91,7 @@
             </div>
           </div>
           <div class="roll-resize-handle" id="nbRollResizeHandle" title="Drag ↕ for row height · Drag ↔ for beat width">⠿</div>
-          <p class="nb-roll-hint">Click keyboard to add notes · Drag notes left/right to reposition · Drag up/down to change pitch · Click to select · Backspace to delete</p>
+          <p class="nb-roll-hint">Click keys to add · drag to move/resize · drag up/down to change pitch · click to select · Backspace to delete · Ctrl+Z to undo</p>
         </div>
 
         <div class="nb-keyboard-wrap">
@@ -109,12 +109,23 @@
         </div>
 
         <div class="nb-bottom-row">
-          <button class="nb-play-seq-btn" id="nbPlaySeqBtn" disabled>▶  play sequence</button>
-          <button class="nb-play-seq-btn" id="nbMetronomeBtn" title="Toggle metronome" style="border-color:#fbbf24; color:#fbbf24;">♩ metronome</button>
-          <button class="nb-play-seq-btn" id="nbCopyBtn" title="Copy selected notes (Ctrl+C)">⎘ copy</button>
-          <button class="nb-play-seq-btn" id="nbPasteBtn" title="Paste copied notes (Ctrl+V)" disabled>⎙ paste</button>
-          <button class="save-melody-btn" id="nbSaveMelodyBtn" disabled>✦ save</button>
-          <button class="nb-analyse-btn" id="nbAnalyseBtn" disabled>Analyse melody →</button>
+          <!-- Playback group -->
+          <div class="nb-btn-group">
+            <button class="nb-play-seq-btn" id="nbPlaySeqBtn" disabled>▶ play</button>
+            <button class="nb-play-seq-btn nb-metronome-btn" id="nbMetronomeBtn" title="Toggle metronome">♩</button>
+          </div>
+          <!-- Edit group -->
+          <div class="nb-btn-group">
+            <button class="nb-play-seq-btn" id="nbUndoBtn" title="Undo (Ctrl+Z)">↩</button>
+            <button class="nb-play-seq-btn" id="nbRedoBtn" title="Redo (Ctrl+Y)">↪</button>
+            <button class="nb-play-seq-btn" id="nbCopyBtn" title="Copy selected (Ctrl+C)">⎘</button>
+            <button class="nb-play-seq-btn" id="nbPasteBtn" title="Paste (Ctrl+V)" disabled>⎙</button>
+          </div>
+          <!-- Action group -->
+          <div class="nb-btn-group nb-btn-group--right">
+            <button class="save-melody-btn" id="nbSaveMelodyBtn" disabled>✦ save</button>
+            <button class="nb-analyse-btn" id="nbAnalyseBtn" disabled>Analyse →</button>
+          </div>
         </div>
       </div>
     </div>
@@ -196,6 +207,8 @@
           <button class="nb-play-seq-btn" id="mrMetronomeBtn" title="Toggle metronome" style="border-color:#fbbf24; color:#fbbf24;">♩ metronome</button>
           <button class="nb-play-seq-btn" id="mrPlayRawBtn" style="border-color:#ff8c42; color:#ff8c42;">🎤 play raw mic</button>
           <button class="nb-play-seq-btn" id="mrAutoTuneBtn" style="border-color:#a78bfa; color:#a78bfa;">✨ auto-tune</button>
+          <button class="nb-play-seq-btn" id="mrUndoBtn" title="Undo (Ctrl+Z)">↩ undo</button>
+          <button class="nb-play-seq-btn" id="mrRedoBtn" title="Redo (Ctrl+Y / Ctrl+Shift+Z)">↪ redo</button>
           <button class="nb-play-seq-btn" id="mrCopyBtn" title="Copy selected notes (Ctrl+C)">⎘ copy</button>
           <button class="nb-play-seq-btn" id="mrPasteBtn" title="Paste copied notes (Ctrl+V)" disabled>⎙ paste</button>
           <button class="nb-analyse-btn" id="mrAnalyseBtn" style="margin-left:auto" disabled>Analyse melody →</button>

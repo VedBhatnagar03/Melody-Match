@@ -915,15 +915,15 @@ main { flex: 1; max-width: 860px; margin: 0 auto; width: 100%; padding: 0 24px 6
   background: var(--bg1);
   border: 1px solid var(--border);
   border-radius: 8px;
-  padding: 16px 20px;
-  margin-bottom: 20px;
+  padding: 12px 16px;
+  margin-bottom: 12px;
 }
 
 .nb-roll-header {
   display: flex;
   align-items: center;
-  gap: 12px;
-  margin-bottom: 14px;
+  gap: 10px;
+  margin-bottom: 10px;
   flex-wrap: wrap;
 }
 
@@ -1001,14 +1001,14 @@ main { flex: 1; max-width: 860px; margin: 0 auto; width: 100%; padding: 0 24px 6
   background: var(--bg1);
   border: 1px solid var(--border);
   border-radius: 8px;
-  padding: 24px 20px 16px;
-  margin-bottom: 20px;
+  padding: 14px 16px 12px;
+  margin-bottom: 12px;
 }
 
 .nb-keyboard-scroll {
   overflow-x: auto;
   overflow-y: hidden;
-  margin-bottom: 16px;
+  margin-bottom: 10px;
   padding-bottom: 4px;
   /* subtle scrollbar */
   scrollbar-width: thin;
@@ -1109,47 +1109,98 @@ main { flex: 1; max-width: 860px; margin: 0 auto; width: 100%; padding: 0 24px 6
 
 .nb-bottom-row {
   display: flex;
-  gap: 10px;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* A logical group of buttons — renders as a pill cluster */
+.nb-btn-group {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  border: 1px solid var(--border2);
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--bg2);
+}
+.nb-btn-group .nb-play-seq-btn {
+  border: none;
+  border-right: 1px solid var(--border);
+  border-radius: 0;
+  padding: 10px 14px;
+  font-size: 12px;
+}
+.nb-btn-group .nb-play-seq-btn:last-child { border-right: none; }
+.nb-btn-group .nb-play-seq-btn:hover:not(:disabled) {
+  background: rgba(0,212,255,0.08);
+  color: var(--cyan);
+}
+/* Push the action group (save + analyse) to the far right */
+.nb-btn-group--right { margin-left: auto; }
+.nb-btn-group--right .save-melody-btn {
+  border: none;
+  border-right: 1px solid rgba(46,204,113,0.25);
+  border-radius: 0;
+  padding: 10px 14px;
+  font-size: 12px;
+}
+.nb-btn-group--right .nb-analyse-btn {
+  flex: none;
+  border-radius: 0;
+  padding: 10px 16px;
+  font-size: 12px;
 }
 
 .nb-play-seq-btn {
-  padding: 14px 20px;
+  padding: 10px 16px;
   border-radius: 6px;
   border: 1px solid var(--border2);
   background: var(--bg2);
   color: var(--text2);
   font-family: 'Space Mono', monospace;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 700;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.06em;
   cursor: pointer;
   transition: all 0.15s;
   white-space: nowrap;
 }
 .nb-play-seq-btn:hover:not(:disabled) { border-color: var(--cyan); color: var(--cyan); }
 .nb-play-seq-btn:disabled { opacity: 0.3; cursor: default; }
-.nb-play-seq-btn.playing { border-color: var(--red); color: var(--red); }
+.nb-play-seq-btn.playing { border-color: var(--red); color: var(--red); background: rgba(255,71,87,0.08); }
+
+/* Metronome icon-only button — always amber tinted, brighter when active */
+.nb-metronome-btn {
+  padding: 10px 12px;
+  font-size: 14px;
+  color: #fbbf24;
+  border-color: rgba(251,191,36,0.35) !important;
+}
+.nb-metronome-btn:hover:not(:disabled) { color: #fbbf24 !important; background: rgba(251,191,36,0.1) !important; border-color: #fbbf24 !important; }
+.nb-metronome-btn.active { background: rgba(251,191,36,0.18) !important; border-color: #fbbf24 !important; color: #fbbf24 !important; }
 
 .nb-analyse-btn {
   flex: 1;
-  padding: 14px;
+  padding: 10px 16px;
   border-radius: 6px;
   border: none;
   background: var(--cyan);
   color: var(--bg0);
   font-family: 'Space Mono', monospace;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 700;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.06em;
   cursor: pointer;
   transition: all 0.15s;
+  white-space: nowrap;
 }
 .nb-analyse-btn:hover:not(:disabled) { filter: brightness(1.1); }
 .nb-analyse-btn:disabled { opacity: 0.3; cursor: default; }
 
 /* ── SAVE BUTTON ── */
 .save-melody-btn {
-  padding: 10px 18px;
+  padding: 10px 14px;
   border-radius: 6px;
   border: 1px solid var(--green);
   background: transparent;
@@ -1157,12 +1208,13 @@ main { flex: 1; max-width: 860px; margin: 0 auto; width: 100%; padding: 0 24px 6
   font-family: 'Space Mono', monospace;
   font-size: 12px;
   font-weight: 700;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.06em;
   cursor: pointer;
   transition: all 0.15s;
   white-space: nowrap;
 }
-.save-melody-btn:hover { background: var(--green); color: var(--bg0); }
+.save-melody-btn:hover:not(:disabled) { background: rgba(46,204,113,0.15); }
+.save-melody-btn:disabled { opacity: 0.3; cursor: default; }
 .save-melody-btn.saved { border-color: var(--text3); color: var(--text3); cursor: default; }
 
 /* ── SAVED MELODIES PANEL ── */

@@ -290,6 +290,16 @@ if (reverbSlider) {
   });
 }
 
+// Drum toggle buttons
+document.getElementById('drumBar')?.addEventListener('click', e => {
+  const btn = e.target.closest('.drum-toggle-btn');
+  if (!btn) return;
+  const type = btn.dataset.drum;
+  drumEnabled[type] = !drumEnabled[type];
+  btn.classList.toggle('active', drumEnabled[type]);
+  stopPlayback();
+});
+
 /* ───────────────────────────────────────────────
    SAVED MELODIES  (localStorage)
 ─────────────────────────────────────────────── */

@@ -236,7 +236,6 @@
           <button class="inst-btn inst-btn-mel" data-inst="strings">Strings</button>
           <button class="inst-btn inst-btn-mel" data-inst="bass">Bass</button>
           <button class="inst-btn inst-btn-mel" data-inst="flute">Flute</button>
-          <button class="inst-btn inst-btn-mel" data-inst="drums">Drums</button>
           <button class="melody-toggle active" id="melodyToggle" style="margin-left:auto">♪ melody on</button>
         </div>
         
@@ -247,14 +246,20 @@
           <button class="inst-btn inst-btn-chord" data-inst="strings">Strings</button>
           <button class="inst-btn inst-btn-chord" data-inst="bass">Bass</button>
           <button class="inst-btn inst-btn-chord" data-inst="flute">Flute</button>
-          <button class="inst-btn inst-btn-chord" data-inst="drums">Drums</button>
-          
           <div style="margin-left:auto; display:flex; align-items:center; gap: 10px;">
             <span class="detected-label">raw mic</span>
             <input type="range" id="rawMicSlider" min="0" max="100" value="80" style="width: 70px; accent-color: var(--pink);">
             <span class="detected-label" style="margin-left:8px;">reverb</span>
             <input type="range" id="reverbSlider" min="0" max="100" value="18" style="width: 70px; accent-color: var(--cyan);">
           </div>
+        </div>
+
+        <div class="instrument-bar" id="drumBar">
+          <span class="detected-label">drums</span>
+          <button class="drum-toggle-btn" id="drumKickBtn"   data-drum="kick">kick</button>
+          <button class="drum-toggle-btn" id="drumSnareBtn"  data-drum="snare">snare</button>
+          <button class="drum-toggle-btn" id="drumHatBtn"    data-drum="hat">hi-hat</button>
+          <button class="drum-toggle-btn" id="drumClapBtn"   data-drum="clap">clap</button>
         </div>
 
         <div class="scale-cards" id="scaleCards"></div>

@@ -10,6 +10,8 @@ let melodyInstrument = 'piano';
 let chordInstrument = 'piano';
 let melodyEnabled = true;
 let globalReverbAmount = 0.18;
+// Drum toggles — each type independently on/off
+const drumEnabled = { kick: false, snare: false, hat: false, clap: false };
 const samplerCache = {};
 const melodySamplerCache = {};
 
@@ -18,15 +20,6 @@ function loadSampler(instKey) {
   const cfg = INSTRUMENTS[instKey];
   const promise = new Promise(resolve => {
     const gain = new Tone.Gain(1).toDestination();
-    
-    if (cfg && cfg.isDrum) {
-      const kick = new Tone.MembraneSynth().connect(gain);
-      const hat = new Tone.MetalSynth({ envelope: { attack: 0.001, decay: 0.1, release: 0.01 } }).connect(gain);
-      gain.gain.value = 0.5;
-      resolve({ isDrum: true, drumSynth: { kick, hat }, gain });
-      return;
-    }
-    
     const s = new Tone.Sampler(cfg.notes, {
       baseUrl: cfg.url,
       release: cfg.release,
@@ -48,15 +41,6 @@ function loadMelodySampler(instKey) {
   const cfg = INSTRUMENTS[instKey];
   const promise = new Promise(resolve => {
     const gain = new Tone.Gain(1).toDestination();
-    
-    if (cfg && cfg.isDrum) {
-      const kick = new Tone.MembraneSynth().connect(gain);
-      const hat = new Tone.MetalSynth({ envelope: { attack: 0.001, decay: 0.1, release: 0.01 } }).connect(gain);
-      gain.gain.value = 0.6;
-      resolve({ isDrum: true, drumSynth: { kick, hat }, gain });
-      return;
-    }
-
     const s = new Tone.Sampler(cfg.notes, {
       baseUrl: cfg.url,
       release: cfg.release,
@@ -73,10 +57,28 @@ function loadMelodySampler(instKey) {
   return promise;
 }
 
+let drumSynthCache = null;
+function loadDrums() {
+  if (drumSynthCache) return drumSynthCache;
+  const gain = new Tone.Gain(0.7).toDestination();
+  drumSynthCache = {
+    gain,
+    kick:  new Tone.MembraneSynth({ pitchDecay: 0.05, octaves: 6, envelope: { attack: 0.001, decay: 0.3, sustain: 0, release: 0.1 } }).connect(gain),
+    snare: new Tone.NoiseSynth({ noise: { type: 'white' }, envelope: { attack: 0.001, decay: 0.15, sustain: 0, release: 0.05 } }).connect(gain),
+    hat:   new Tone.MetalSynth({ frequency: 400, envelope: { attack: 0.001, decay: 0.08, release: 0.01 }, harmonicity: 5.1, modulationIndex: 32, resonance: 4000, octaves: 1.5 }).connect(gain),
+    clap:  new Tone.NoiseSynth({ noise: { type: 'pink' }, envelope: { attack: 0.005, decay: 0.1, sustain: 0, release: 0.05 } }).connect(gain),
+  };
+  return drumSynthCache;
+}
+
 function stopPlayback() {
   playGeneration++;
   Tone.Transport.stop();
   Tone.Transport.cancel();
+  if (drumSynthCache) {
+    try { drumSynthCache.gain.disconnect(); } catch(e){}
+    drumSynthCache = null;
+  }
   activeSynths.forEach(s => { try { s.releaseAll ? s.releaseAll() : null; } catch(e){} });
   activeSynths = [];
   playingIdx = -1;
@@ -158,10 +160,8 @@ async function playSuggestion(result, detectedPitches, bars, bpm, firstNoteSecOf
   btnEl.textContent = isAlt ? '■' : '■  stop';
   btnEl.disabled = false;
 
-  const chordGain     = chordHandle.gain;
-  const melGain       = melodyHandle.gain;
-  const isChordDrum   = chordHandle.isDrum;
-  const isMelDrum     = melodyHandle.isDrum;
+  const chordGain = chordHandle.gain;
+  const melGain   = melodyHandle.gain;
 
   const reverbCfg = result.scale && result.scale.reverb;
   const recommendedReverb = reverbCfg || { decay: 1.2, wet: 0.18 };
@@ -184,8 +184,8 @@ async function playSuggestion(result, detectedPitches, bars, bpm, firstNoteSecOf
   reverb.toDestination();
 
   activeSynths = [
-    { releaseAll: () => { try { if (!isChordDrum) chordHandle.sampler.releaseAll(); } catch(e){} } },
-    { releaseAll: () => { try { if (!isMelDrum) melodyHandle.sampler.releaseAll();   } catch(e){} } },
+    { releaseAll: () => { try { chordHandle.sampler.releaseAll(); } catch(e){} } },
+    { releaseAll: () => { try { melodyHandle.sampler.releaseAll(); } catch(e){} } },
     { releaseAll: () => {
         try { if (rawPlayer) rawPlayer.dispose(); } catch(e){}
         try { chordGain.disconnect(); melGain.disconnect(); } catch(e){}
@@ -204,43 +204,85 @@ async function playSuggestion(result, detectedPitches, bars, bpm, firstNoteSecOf
   const barLen = secPerBeat * 4;
   const pseudoRand = (seed) => ((Math.sin(seed * 9301 + 49297) * 0.5 + 0.5));
 
-  // CHORDS — all times in seconds from Transport start (bar i starts at i * barLen seconds)
+  // CHORDS — all times in seconds from Transport start
   bars.forEach((bar, i) => {
     const tStartSec = i * barLen;
-
-    if (isChordDrum) {
-      for (let b = 0; b < 4; b++) {
-        const beatSec = tStartSec + b * secPerBeat;
-        Tone.Transport.schedule((time) => {
-          chordHandle.drumSynth.kick.triggerAttackRelease("C1", "8n", time);
-        }, `+${beatSec}`);
-        Tone.Transport.schedule((time) => {
-          chordHandle.drumSynth.hat.triggerAttackRelease("32n", time, 0.4);
-        }, `+${beatSec + secPerBeat * 0.5}`); // offbeat (half a beat later)
-      }
-    } else {
-      const chordSampler = chordHandle.sampler;
-      const bassNote = Tone.Frequency(bar.root + 36, 'midi').toNote();
-      const midNotes = bar.intervals.map(o => Tone.Frequency(bar.root + 48 + (o >= 12 ? o - 12 : o), 'midi').toNote());
-      const coreIntervals = bar.intervals.slice(0, 3);
-      const upperNotes = [
-        ...coreIntervals.slice(1).map(o => Tone.Frequency(bar.root + 60 + o, 'midi').toNote()),
-        Tone.Frequency(bar.root + 72, 'midi').toNote(),
-      ];
-
-      Tone.Transport.schedule((time) => {
-        chordSampler.triggerAttackRelease(bassNote, barLen * 0.93, time);
-        midNotes.forEach((note, j) => {
-          const strum = j * (0.018 + pseudoRand(i * 10 + j) * 0.012);
-          chordSampler.triggerAttackRelease(note, barLen * 0.93, time + strum);
-        });
-        upperNotes.forEach((note, j) => {
-          const strum = 0.04 + j * (0.015 + pseudoRand(i * 20 + j) * 0.01);
-          chordSampler.triggerAttackRelease(note, barLen * 0.55, time + strum);
-        });
-      }, `+${tStartSec}`);
-    }
+    const chordSampler = chordHandle.sampler;
+    const bassNote = Tone.Frequency(bar.root + 36, 'midi').toNote();
+    const midNotes = bar.intervals.map(o => Tone.Frequency(bar.root + 48 + (o >= 12 ? o - 12 : o), 'midi').toNote());
+    const coreIntervals = bar.intervals.slice(0, 3);
+    const upperNotes = [
+      ...coreIntervals.slice(1).map(o => Tone.Frequency(bar.root + 60 + o, 'midi').toNote()),
+      Tone.Frequency(bar.root + 72, 'midi').toNote(),
+    ];
+    Tone.Transport.schedule((time) => {
+      chordSampler.triggerAttackRelease(bassNote, barLen * 0.93, time);
+      midNotes.forEach((note, j) => {
+        const strum = j * (0.018 + pseudoRand(i * 10 + j) * 0.012);
+        chordSampler.triggerAttackRelease(note, barLen * 0.93, time + strum);
+      });
+      upperNotes.forEach((note, j) => {
+        const strum = 0.04 + j * (0.015 + pseudoRand(i * 20 + j) * 0.01);
+        chordSampler.triggerAttackRelease(note, barLen * 0.55, time + strum);
+      });
+    }, `+${tStartSec}`);
   });
+
+  // DRUMS — each type scheduled independently based on drumEnabled toggles
+  const anyDrumOn = Object.values(drumEnabled).some(Boolean);
+  if (anyDrumOn) {
+    const drums = loadDrums();
+    // Reconnect drum gain through reverb for this playback session
+    drums.gain.disconnect();
+    drums.gain.connect(reverb);
+    activeSynths.push({ releaseAll: () => {
+      try { drums.gain.disconnect(); drums.gain.toDestination(); } catch(e){}
+    }});
+
+    const totalBars = bars.length;
+    for (let i = 0; i < totalBars; i++) {
+      for (let b = 0; b < 4; b++) {
+        const beatSec = i * barLen + b * secPerBeat;
+
+        // Kick: downbeat (beat 1) + beat 3 of every bar
+        if (drumEnabled.kick) {
+          if (b === 0 || b === 2) {
+            Tone.Transport.schedule((time) => {
+              drums.kick.triggerAttackRelease('C1', '8n', time);
+            }, `+${beatSec}`);
+          }
+        }
+
+        // Snare: backbeats (beats 2 and 4)
+        if (drumEnabled.snare) {
+          if (b === 1 || b === 3) {
+            Tone.Transport.schedule((time) => {
+              drums.snare.triggerAttackRelease('8n', time);
+            }, `+${beatSec}`);
+          }
+        }
+
+        // Hi-hat: every 8th note (twice per beat)
+        if (drumEnabled.hat) {
+          Tone.Transport.schedule((time) => {
+            drums.hat.triggerAttackRelease('32n', time);
+          }, `+${beatSec}`);
+          Tone.Transport.schedule((time) => {
+            drums.hat.triggerAttackRelease('32n', time);
+          }, `+${beatSec + secPerBeat * 0.5}`);
+        }
+
+        // Clap: same as snare (backbeats) but can layer or be used alone
+        if (drumEnabled.clap) {
+          if (b === 1 || b === 3) {
+            Tone.Transport.schedule((time) => {
+              drums.clap.triggerAttackRelease('16n', time);
+            }, `+${beatSec}`);
+          }
+        }
+      }
+    }
+  }
 
   // MELODY — all times in seconds from Transport start
   if (melodyEnabled && detectedPitches.length > 0) {
@@ -253,11 +295,7 @@ async function playSuggestion(result, detectedPitches, bars, bpm, firstNoteSecOf
         const noteSec = p.beat * secPerBeat + (firstNoteSecOffset || 0);
         const dur = Math.min((p.dur ?? 1) * secPerBeat * 0.9, bars.length * barLen);
         Tone.Transport.schedule((time) => {
-          if (isMelDrum) {
-            melodyHandle.drumSynth.hat.triggerAttackRelease("16n", time);
-          } else {
-            melodyHandle.sampler.triggerAttackRelease(Tone.Frequency(p.midi, 'midi').toNote(), dur, time);
-          }
+          melodyHandle.sampler.triggerAttackRelease(Tone.Frequency(p.midi, 'midi').toNote(), dur, time);
         }, `+${Math.max(0, noteSec)}`);
       });
     } else {
@@ -281,11 +319,7 @@ async function playSuggestion(result, detectedPitches, bars, bpm, firstNoteSecOf
         const relSec = ((p.time - t0ms) / 1000) * timeScale;
         const dur    = Math.min((p.dur ?? 0.5) * secPerBeat * timeScale * 0.88, barLen * 0.95);
         Tone.Transport.schedule((time) => {
-          if (isMelDrum) {
-            melodyHandle.drumSynth.hat.triggerAttackRelease("16n", time);
-          } else {
-            melodyHandle.sampler.triggerAttackRelease(Tone.Frequency(p.midi, 'midi').toNote(), Math.max(0.05, dur), time);
-          }
+          melodyHandle.sampler.triggerAttackRelease(Tone.Frequency(p.midi, 'midi').toNote(), Math.max(0.05, dur), time);
         }, `+${Math.max(0, relSec)}`);
       });
     }

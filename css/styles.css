@@ -792,6 +792,13 @@ main { flex: 1; max-width: 860px; margin: 0 auto; width: 100%; padding: 0 24px 6
   padding: 5px 13px;
   border-radius: 4px;
   border: 1px solid;
+  transition: background 0.12s, box-shadow 0.12s, transform 0.08s;
+}
+.chord-chip.active {
+  background: color-mix(in srgb, var(--card-color, #00d4ff) 28%, transparent) !important;
+  border-color: var(--card-color, #00d4ff) !important;
+  box-shadow: 0 0 10px color-mix(in srgb, var(--card-color, #00d4ff) 55%, transparent);
+  transform: translateY(-2px);
 }
 
 .chord-sep {
@@ -874,6 +881,14 @@ main { flex: 1; max-width: 860px; margin: 0 auto; width: 100%; padding: 0 24px 6
   border-radius: 4px;
   border: 1px solid;
   opacity: 0.8;
+  transition: background 0.12s, box-shadow 0.12s, transform 0.08s;
+}
+.alt-chip.active {
+  opacity: 1;
+  background: color-mix(in srgb, var(--card-color, #00d4ff) 28%, transparent) !important;
+  border-color: var(--card-color, #00d4ff) !important;
+  box-shadow: 0 0 8px color-mix(in srgb, var(--card-color, #00d4ff) 50%, transparent);
+  transform: translateY(-1px);
 }
 .alt-play-btn {
   margin-left: auto;

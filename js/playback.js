@@ -93,6 +93,7 @@ function stopPlayback() {
     b.classList.remove('paused');
     b.textContent = '▶';
   });
+  document.querySelectorAll('.chord-chip.active, .alt-chip.active').forEach(el => el.classList.remove('active'));
 }
 
 function togglePlayPause(btnEl, isAlt = false) {
@@ -227,6 +228,26 @@ async function playSuggestion(result, detectedPitches, bars, bpm, firstNoteSecOf
       });
     }, `+${tStartSec}`);
   });
+
+  // CHORD CHIP HIGHLIGHTS — highlight the active bar's chip during playback
+  const cardEl = btnEl.closest('.scale-card');
+  const chipClass = btnEl.classList.contains('alt-play-btn') ? '.alt-chip' : '.chord-chip';
+  if (cardEl) {
+    // Find the alt row that contains this button (only relevant for alt-play-btn)
+    const altRow = btnEl.closest('.alt-prog-row');
+    const chipContainer = altRow || cardEl.querySelector('.chords-row');
+
+    bars.forEach((bar, i) => {
+      const tStartSec = i * barLen;
+      Tone.Transport.schedule((time) => {
+        Tone.Draw.schedule(() => {
+          if (playingIdx !== idx) return;
+          const chips = chipContainer ? chipContainer.querySelectorAll(chipClass) : [];
+          chips.forEach((chip, j) => chip.classList.toggle('active', j === i));
+        }, time);
+      }, `+${tStartSec}`);
+    });
+  }
 
   // DRUMS — each type scheduled independently based on drumEnabled toggles
   const anyDrumOn = Object.values(drumEnabled).some(Boolean);

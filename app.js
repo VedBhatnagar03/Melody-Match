@@ -69,7 +69,7 @@ document.getElementById('stopBtn').addEventListener('click', async () => {
     const { seq, bpm } = mrPitchesToSequence(detectedPitches);
     const label = `Take ${mrTakes.length + 1}`;
     mrTakes.push({ notes: seq.map(n => ({ ...n })), bpm, label });
-    mrActiveTake = mrTakes.length - 1;
+    mrActiveTake = mrTakes.length > 1 ? 'merged' : 0;
     mrSequence   = mrTakes.length > 1 ? mrMergeTakes(mrTakes) : mrTakes[0].notes.map(n => ({ ...n }));
     mrRenderTakes();
     mrDrawRoll();
@@ -140,6 +140,7 @@ document.getElementById('mrBpmUp').addEventListener('click', () => {
 
 document.getElementById('mrResetBtn').addEventListener('click', () => {
   if (mrTakes.length > 0) {
+    mrActiveTake = mrTakes.length > 1 ? 'merged' : 0;
     mrSequence = mrTakes.length > 1
       ? mrMergeTakes(mrTakes)
       : mrTakes[0].notes.map(n => ({ ...n }));
@@ -148,6 +149,33 @@ document.getElementById('mrResetBtn').addEventListener('click', () => {
   }
   mrDrawRoll();
   mrUpdateUI();
+});
+
+document.getElementById('mrAutoTuneBtn').addEventListener('click', () => {
+  if (typeof mrAutoTuneSequence !== 'undefined') mrAutoTuneSequence();
+});
+
+let mrRawAudioElement = null;
+document.getElementById('mrPlayRawBtn').addEventListener('click', () => {
+  if (typeof rawAudioBlob === 'undefined' || !rawAudioBlob) return;
+  const btn = document.getElementById('mrPlayRawBtn');
+  
+  if (mrRawAudioElement) {
+    mrRawAudioElement.pause();
+    mrRawAudioElement = null;
+    btn.textContent = '🎤 play raw mic';
+    return;
+  }
+  
+  const url = URL.createObjectURL(rawAudioBlob);
+  mrRawAudioElement = new Audio(url);
+  mrRawAudioElement.play();
+  btn.textContent = '❚❚ stop raw';
+  
+  mrRawAudioElement.onended = () => {
+    mrRawAudioElement = null;
+    btn.textContent = '🎤 play raw mic';
+  };
 });
 
 document.getElementById('mrPlayBtn').addEventListener('click', async () => {

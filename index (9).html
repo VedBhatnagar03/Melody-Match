@@ -188,9 +188,11 @@
           <p class="mr-roll-hint">Drag notes left/right to reposition · Drag right edge to resize · Click to remove · Pitch row = exact MIDI note</p>
         </div>
 
-        <div class="mr-bottom-row">
-          <button class="nb-play-seq-btn" id="mrPlayBtn" disabled>▶  play</button>
-          <button class="nb-analyse-btn" id="mrAnalyseBtn" disabled>Analyse melody →</button>
+        <div class="mr-bottom-row" style="display:flex; gap:10px; align-items:center;">
+          <button class="nb-play-seq-btn" id="mrPlayBtn" disabled>▶  play sequence</button>
+          <button class="nb-play-seq-btn" id="mrPlayRawBtn" style="border-color:#ff8c42; color:#ff8c42;">🎤 play raw mic</button>
+          <button class="nb-play-seq-btn" id="mrAutoTuneBtn" style="border-color:#a78bfa; color:#a78bfa;">✨ auto-tune</button>
+          <button class="nb-analyse-btn" id="mrAnalyseBtn" style="margin-left:auto" disabled>Analyse melody →</button>
         </div>
       </div>
     </div>
@@ -248,8 +250,10 @@
           <button class="inst-btn inst-btn-chord" data-inst="drums">Drums</button>
           
           <div style="margin-left:auto; display:flex; align-items:center; gap: 10px;">
-            <span class="detected-label">reverb</span>
-            <input type="range" id="reverbSlider" min="0" max="100" value="18" style="width: 80px; accent-color: var(--cyan);">
+            <span class="detected-label">raw mic</span>
+            <input type="range" id="rawMicSlider" min="0" max="100" value="80" style="width: 70px; accent-color: var(--pink);">
+            <span class="detected-label" style="margin-left:8px;">reverb</span>
+            <input type="range" id="reverbSlider" min="0" max="100" value="18" style="width: 70px; accent-color: var(--cyan);">
           </div>
         </div>
 
@@ -266,6 +270,7 @@
             <p class="results-sub">Adjust chords and melody timing</p>
           </div>
           <div style="display:flex;gap:10px;align-items:center">
+            <button class="inst-btn" id="editorRefineBtn" style="border-color:#ff8c42; color:#ff8c42; white-space: nowrap;">✨ auto-refine</button>
             <button class="re-record-btn" id="editorBackBtn">← back</button>
             <button class="save-melody-btn" id="editorExportBtn">⤓ export audio</button>
           </div>

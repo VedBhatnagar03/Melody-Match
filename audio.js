@@ -19,6 +19,7 @@ let recAudioCtx = null;
 
 let detectedPitches = []; // [{midi, pc, freq, time, dur}]
 let pitchSource = 'mic';  // 'mic' | 'builder'
+let rawAudioBlob = null;
 
 function setRecStep(msg) {
   const el = document.getElementById('procStep');
@@ -231,8 +232,8 @@ async function analyseRecording() {
     return false;
   }
 
-  const blob = new Blob(recordedChunks, { type: recordedChunks[0].type || 'audio/webm' });
-  const arrayBuf = await blob.arrayBuffer();
+  rawAudioBlob = new Blob(recordedChunks, { type: recordedChunks[0].type || 'audio/webm' });
+  const arrayBuf = await rawAudioBlob.arrayBuffer();
 
   setRecStep('Decoding audio...');
   let audioBuffer;
@@ -334,10 +335,10 @@ async function analyseAudioBuffer(audioBuffer) {
   }
 
   // ── Pass 1c: Hysteresis MIDI Quantization ("Autotune Snap") ──
-  // Only shift to a new note if pitch drifts by >60 cents from the explicitly locked note.
+  // Only shift to a new note if pitch drifts by >50 cents from the explicitly locked note.
   const frames = [];
   let currentLockedMidi = null;
-  const HYSTERESIS_THRESHOLD = 0.65; // cents / 100
+  const HYSTERESIS_THRESHOLD = 0.50; // cents / 100
 
   for (let i = 0; i < medFrames.length; i++) {
     const f = medFrames[i];
@@ -376,7 +377,7 @@ async function analyseAudioBuffer(audioBuffer) {
   });
 
   // ── Pass 3: onset segmentation ──
-  const MIN_NOTE_MS  = 130;  // Raised from 80ms to ignore short consonants
+  const MIN_NOTE_MS  = 100;  // Raised from 80ms, but lower than 130 to catch snappier notes
   const MIN_NOTE_RMS = 0.016; 
   const GLUE_GAP_MS  = 60;
 

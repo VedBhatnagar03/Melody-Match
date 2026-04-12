@@ -123,10 +123,28 @@ async function playSuggestion(result, detectedPitches, bars, bpm, firstNoteSecOf
   btnEl.textContent = isAlt ? '...' : '⟳  loading...';
   btnEl.disabled = true;
 
-  let chordHandle, melodyHandle;
+  let chordHandle, melodyHandle, rawPlayer;
   try {
     chordHandle  = await loadSampler(chordInstrument);
     melodyHandle = await loadMelodySampler(melodyInstrument);
+    
+    if (typeof rawAudioBlob !== 'undefined' && rawAudioBlob && pitchSource === 'mic') {
+      const rawMicVol = document.getElementById('rawMicSlider') ? parseInt(document.getElementById('rawMicSlider').value) / 100 : 0.8;
+      if (rawMicVol > 0) {
+        await new Promise(resolve => {
+          rawPlayer = new Tone.Player({
+            url: URL.createObjectURL(rawAudioBlob),
+            onload: resolve,
+            onerror: resolve
+          }).toDestination();
+        });
+        if (rawPlayer.loaded) {
+          rawPlayer.volume.value = Tone.gainToDb(Math.max(0.01, rawMicVol * 0.7));
+        } else {
+          rawPlayer = null;
+        }
+      }
+    }
   } catch(e) {
     btnEl.classList.remove('playing');
     btnEl.textContent = isAlt ? '▶' : '▶  play';
@@ -169,6 +187,7 @@ async function playSuggestion(result, detectedPitches, bars, bpm, firstNoteSecOf
     { releaseAll: () => { try { if (!isChordDrum) chordHandle.sampler.releaseAll(); } catch(e){} } },
     { releaseAll: () => { try { if (!isMelDrum) melodyHandle.sampler.releaseAll();   } catch(e){} } },
     { releaseAll: () => {
+        try { if (rawPlayer) rawPlayer.dispose(); } catch(e){}
         try { chordGain.disconnect(); melGain.disconnect(); } catch(e){}
         try { chordEQ.dispose(); melEQ.dispose(); reverb.dispose(); } catch(e){}
         try {
@@ -245,6 +264,15 @@ async function playSuggestion(result, detectedPitches, bars, bpm, firstNoteSecOf
       const spanMs   = Math.max(1, (lastNote.time + (lastNote.dur ?? 1) * 1000 * secPerBeat) - t0ms);
       const totalSec = bars.length * barLen;
       const scale    = totalSec / (spanMs / 1000);
+
+      // Play raw mic audio scaled to match
+      if (rawPlayer && rawPlayer.loaded) {
+        rawPlayer.playbackRate = 1 / scale;
+        rawPlayer.connect(reverb);
+        Tone.Transport.schedule((time) => {
+          rawPlayer.start(time, t0ms / 1000);
+        }, `+0`);
+      }
 
       detectedPitches.forEach(p => {
         const relSec = ((p.time - t0ms) / 1000) * scale;

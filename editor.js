@@ -429,12 +429,21 @@ async function edTogglePlay(isExport = false) {
   });
 
   const totalBeats = getEdTotalBeats();
-  Tone.Transport.schedule((time) => {
-    Tone.Draw.schedule(() => {
-      stopEdPlayback();
-      cleanup();
-    }, time);
-  }, `+0:0:${totalBeats * 4}`);
+  const loopEndStr = `+0:0:${totalBeats * 4}`;
+
+  if (!isExport) {
+    Tone.Transport.loop = true;
+    Tone.Transport.loopStart = 0;
+    Tone.Transport.loopEnd = `0:0:${totalBeats * 4}`;
+  } else {
+    Tone.Transport.loop = false;
+    Tone.Transport.schedule((time) => {
+      Tone.Draw.schedule(() => {
+        stopEdPlayback();
+        cleanup();
+      }, time);
+    }, loopEndStr);
+  }
 
   Tone.Transport.start();
 
@@ -452,6 +461,7 @@ async function edTogglePlay(isExport = false) {
 function stopEdPlayback() {
   Tone.Transport.stop();
   Tone.Transport.cancel();
+  Tone.Transport.loop = false;
   
   const btn = document.getElementById('edPlayBtn');
   if(btn) {
@@ -461,12 +471,47 @@ function stopEdPlayback() {
   requestAnimationFrame(edDrawRoll);
 }
 
+// ── "SPOTIFY" AUTO-REFINE HEURISTIC ──
+function edRefineMelody() {
+  if (!edScaleResult || !edScaleResult.scale) return;
+  const scalePcs = edScaleResult.scale.profile.map((val, pc) => val === 1 ? (edScaleResult.root + pc) % 12 : -1).filter(v => v !== -1);
+  
+  edPitches.forEach(p => {
+    // Quantize timing strictly to 8th notes (0.5 beats)
+    p.beat = Math.round(p.beat * 2) / 2;
+    p.dur = Math.max(0.5, Math.round(p.dur * 2) / 2);
+    
+    // Snap dissonant pitches to the nearest scale degree
+    if (!scalePcs.includes(p.pc)) {
+      let bestMidi = p.midi;
+      let minDiff = Infinity;
+      for (const spc of scalePcs) {
+        // find nearest octave variant
+        for (let oct = -1; oct <= 1; oct++) {
+          const candidateMidi = spc + (Math.floor(p.midi / 12) + oct) * 12;
+          const diff = Math.abs(candidateMidi - p.midi);
+          if (diff < minDiff) { minDiff = diff; bestMidi = candidateMidi; }
+        }
+      }
+      p.midi = bestMidi;
+      p.pc = bestMidi % 12;
+    }
+  });
+
+  edDrawRoll();
+}
+
 // ── DOM BINDINGS ──
 document.addEventListener('DOMContentLoaded', () => {
 
   document.getElementById('editorBackBtn').addEventListener('click', () => {
     stopEdPlayback();
     showScreen('results');
+  });
+
+  const refineBtn = document.getElementById('editorRefineBtn');
+  if(refineBtn) refineBtn.addEventListener('click', () => {
+    edRefineMelody();
   });
 
   document.getElementById('edPlayBtn').addEventListener('click', () => {

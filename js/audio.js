@@ -20,6 +20,7 @@ let recAudioCtx = null;
 let detectedPitches = []; // [{midi, pc, freq, time, dur}]
 let pitchSource = 'mic';  // 'mic' | 'builder'
 let rawAudioBlob = null;
+let mrWaveformData = null; // Float32Array of RMS amplitudes, normalised 0-1, for roll overlay
 
 function setRecStep(msg) {
   const el = document.getElementById('procStep');
@@ -250,6 +251,32 @@ async function analyseRecording() {
       alert('Could not decode the recording. Please try a different browser (Chrome or Firefox recommended).');
       return false;
     }
+  }
+
+  // Downsample mono waveform to ~800 RMS buckets for roll overlay
+  try {
+    const mono = audioBuffer.numberOfChannels > 1
+      ? (() => {
+          const L = audioBuffer.getChannelData(0);
+          const R = audioBuffer.getChannelData(1);
+          const m = new Float32Array(L.length);
+          for (let i = 0; i < L.length; i++) m[i] = (L[i] + R[i]) * 0.5;
+          return m;
+        })()
+      : audioBuffer.getChannelData(0);
+    const NUM_BUCKETS = 800;
+    const bucketSize = Math.floor(mono.length / NUM_BUCKETS);
+    const buckets = new Float32Array(NUM_BUCKETS);
+    for (let b = 0; b < NUM_BUCKETS; b++) {
+      let sum = 0;
+      const start = b * bucketSize;
+      for (let s = 0; s < bucketSize; s++) sum += mono[start + s] ** 2;
+      buckets[b] = Math.sqrt(sum / bucketSize);
+    }
+    const peak = Math.max(...buckets, 0.0001);
+    mrWaveformData = buckets.map(v => v / peak);
+  } catch(e) {
+    mrWaveformData = null;
   }
 
   setRecStep('Running pitch analysis...');

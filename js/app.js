@@ -91,6 +91,7 @@ document.getElementById('reRecordBtn').addEventListener('click', () => {
   micStream?.getTracks().forEach(t => t.stop());
   micStream = null;
   detectedPitches = [];
+  mrWaveformData = null;
   mrTakes      = [];
   mrSequence   = [];
   mrAddingTake = false;
@@ -116,6 +117,7 @@ document.getElementById('mrBackBtn').addEventListener('click', () => {
   mrSequence   = [];
   mrAddingTake = false;
   detectedPitches = [];
+  mrWaveformData = null;
   showScreen('idle');
 });
 

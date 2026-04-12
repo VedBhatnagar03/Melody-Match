@@ -205,6 +205,36 @@ function mrDrawRoll(highlightTake = null) {
     ctx.beginPath(); ctx.moveTo(0, r * MR_ROW_H); ctx.lineTo(W, r * MR_ROW_H); ctx.stroke();
   });
 
+  // Waveform overlay — raw audio amplitude behind note blocks
+  if (typeof mrWaveformData !== 'undefined' && mrWaveformData && mrWaveformData.length > 0) {
+    const wd = mrWaveformData;
+    const midY = H / 2;
+    ctx.save();
+    ctx.globalAlpha = 0.18;
+    ctx.strokeStyle = '#00d4ff';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    for (let i = 0; i < wd.length; i++) {
+      const px = (i / (wd.length - 1)) * W;
+      const amp = wd[i] * (H * 0.44);
+      if (i === 0) ctx.moveTo(px, midY - amp);
+      else ctx.lineTo(px, midY - amp);
+    }
+    // Mirror bottom half
+    for (let i = wd.length - 1; i >= 0; i--) {
+      const px = (i / (wd.length - 1)) * W;
+      const amp = wd[i] * (H * 0.44);
+      ctx.lineTo(px, midY + amp);
+    }
+    ctx.closePath();
+    ctx.fillStyle = '#00d4ff';
+    ctx.globalAlpha = 0.06;
+    ctx.fill();
+    ctx.globalAlpha = 0.2;
+    ctx.stroke();
+    ctx.restore();
+  }
+
   // Highlight take overlay (faint amber)
   if (highlightTake !== null && mrTakes[highlightTake]) {
     for (const note of mrTakes[highlightTake].notes) {

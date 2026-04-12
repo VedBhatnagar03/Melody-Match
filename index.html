@@ -84,23 +84,22 @@
             </div>
             <button class="nb-clear-btn" id="nbClearBtn">clear</button>
           </div>
-          <div class="nb-roll-outer">
+          <div class="nb-roll-outer" id="nbRollOuter">
             <div class="nb-roll-pitch-labels" id="nbPitchLabels"></div>
             <div class="nb-roll-scroll">
               <canvas id="nbRollCanvas"></canvas>
             </div>
           </div>
-          <p class="nb-roll-hint">Click keyboard to add notes · Drag notes left/right to reposition · Click a note to remove it</p>
+          <div class="roll-resize-handle" id="nbRollResizeHandle" title="Drag ↕ for row height · Drag ↔ for beat width">⠿</div>
+          <p class="nb-roll-hint">Click keyboard to add notes · Drag notes left/right to reposition · Drag up/down to change pitch · Click to select · Backspace to delete</p>
         </div>
 
         <div class="nb-keyboard-wrap">
-          <div class="nb-keyboard" id="nbKeyboard"></div>
+          <div class="nb-keyboard-scroll">
+            <div class="nb-keyboard" id="nbKeyboard"></div>
+          </div>
           <div class="nb-octave-row">
-            <span class="detected-label">octave</span>
-            <button class="inst-btn" id="nbOctDown">−</button>
-            <span class="nb-octave-label" id="nbOctaveLabel">4</span>
-            <button class="inst-btn" id="nbOctUp">+</button>
-            <span class="detected-label" style="margin-left:16px">instrument</span>
+            <span class="detected-label">instrument</span>
             <button class="inst-btn active" data-inst="piano">Piano</button>
             <button class="inst-btn" data-inst="guitar">Guitar</button>
             <button class="inst-btn" data-inst="strings">Strings</button>
@@ -111,6 +110,9 @@
 
         <div class="nb-bottom-row">
           <button class="nb-play-seq-btn" id="nbPlaySeqBtn" disabled>▶  play sequence</button>
+          <button class="nb-play-seq-btn" id="nbMetronomeBtn" title="Toggle metronome" style="border-color:#fbbf24; color:#fbbf24;">♩ metronome</button>
+          <button class="nb-play-seq-btn" id="nbCopyBtn" title="Copy selected notes (Ctrl+C)">⎘ copy</button>
+          <button class="nb-play-seq-btn" id="nbPasteBtn" title="Paste copied notes (Ctrl+V)" disabled>⎙ paste</button>
           <button class="save-melody-btn" id="nbSaveMelodyBtn" disabled>✦ save</button>
           <button class="nb-analyse-btn" id="nbAnalyseBtn" disabled>Analyse melody →</button>
         </div>
@@ -179,18 +181,24 @@
             </div>
             <button class="nb-clear-btn" id="mrResetBtn" style="margin-left:auto">reset</button>
           </div>
-          <div class="mr-roll-outer">
+          <div class="mr-roll-outer" id="mrRollOuter">
             <div class="mr-roll-pitch-labels" id="mrPitchLabels"></div>
             <div class="mr-roll-scroll" id="mrRollScroll">
               <canvas id="mrRollCanvas"></canvas>
             </div>
           </div>
-          <p class="mr-roll-hint">Drag notes left/right to reposition · Drag right edge to resize · Click to remove · Pitch row = exact MIDI note</p>
+          <div class="roll-resize-handle" id="mrRollResizeHandle" title="Drag ↕ for row height · Drag ↔ for beat width">⠿</div>
+          <p class="mr-roll-hint">Drag notes left/right to reposition · Drag up/down to change pitch · Drag right edge to resize · Click to select · Backspace to delete</p>
         </div>
 
-        <div class="mr-bottom-row">
-          <button class="nb-play-seq-btn" id="mrPlayBtn" disabled>▶  play</button>
-          <button class="nb-analyse-btn" id="mrAnalyseBtn" disabled>Analyse melody →</button>
+        <div class="mr-bottom-row" style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+          <button class="nb-play-seq-btn" id="mrPlayBtn" disabled>▶  play sequence</button>
+          <button class="nb-play-seq-btn" id="mrMetronomeBtn" title="Toggle metronome" style="border-color:#fbbf24; color:#fbbf24;">♩ metronome</button>
+          <button class="nb-play-seq-btn" id="mrPlayRawBtn" style="border-color:#ff8c42; color:#ff8c42;">🎤 play raw mic</button>
+          <button class="nb-play-seq-btn" id="mrAutoTuneBtn" style="border-color:#a78bfa; color:#a78bfa;">✨ auto-tune</button>
+          <button class="nb-play-seq-btn" id="mrCopyBtn" title="Copy selected notes (Ctrl+C)">⎘ copy</button>
+          <button class="nb-play-seq-btn" id="mrPasteBtn" title="Paste copied notes (Ctrl+V)" disabled>⎙ paste</button>
+          <button class="nb-analyse-btn" id="mrAnalyseBtn" style="margin-left:auto" disabled>Analyse melody →</button>
         </div>
       </div>
     </div>
@@ -219,29 +227,109 @@
             <h2 class="results-title" id="resultsTitle">Best match: <span id="bestMatchName">—</span></h2>
             <p class="results-sub" id="resultsSub">—</p>
           </div>
-          <div style="display:flex;gap:10px;align-items:center">
+          <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
             <button class="save-melody-btn" id="saveMelodyBtn">✦ save melody</button>
+            <button class="re-record-btn" id="editMelodyBtn">✎ edit melody</button>
             <button class="re-record-btn" id="reRecordBtn">↩ record again</button>
           </div>
         </div>
 
         <div class="detected-bar" id="detectedBar"></div>
 
-        <div class="instrument-bar" id="instrumentBar">
-          <span class="detected-label">instrument</span>
-          <button class="inst-btn active" data-inst="piano">Piano</button>
-          <button class="inst-btn" data-inst="guitar">Guitar</button>
-          <button class="inst-btn" data-inst="strings">Strings</button>
-          <button class="inst-btn" data-inst="bass">Bass</button>
-          <button class="inst-btn" data-inst="flute">Flute</button>
+        <div class="instrument-bar" id="instrumentBar-melody">
+          <span class="detected-label">melody</span>
+          <button class="inst-btn inst-btn-mel active" data-inst="piano">Piano</button>
+          <button class="inst-btn inst-btn-mel" data-inst="guitar">Guitar</button>
+          <button class="inst-btn inst-btn-mel" data-inst="strings">Strings</button>
+          <button class="inst-btn inst-btn-mel" data-inst="bass">Bass</button>
+          <button class="inst-btn inst-btn-mel" data-inst="flute">Flute</button>
           <button class="melody-toggle active" id="melodyToggle" style="margin-left:auto">♪ melody on</button>
+        </div>
+        
+        <div class="instrument-bar" id="instrumentBar-chords">
+          <span class="detected-label">chords</span>
+          <button class="inst-btn inst-btn-chord active" data-inst="piano">Piano</button>
+          <button class="inst-btn inst-btn-chord" data-inst="guitar">Guitar</button>
+          <button class="inst-btn inst-btn-chord" data-inst="strings">Strings</button>
+          <button class="inst-btn inst-btn-chord" data-inst="bass">Bass</button>
+          <button class="inst-btn inst-btn-chord" data-inst="flute">Flute</button>
+          <div style="margin-left:auto; display:flex; align-items:center; gap: 10px;">
+            <span class="detected-label">raw mic</span>
+            <input type="range" id="rawMicSlider" min="0" max="100" value="80" style="width: 70px; accent-color: var(--pink);">
+            <span class="detected-label" style="margin-left:8px;">reverb</span>
+            <input type="range" id="reverbSlider" min="0" max="100" value="18" style="width: 70px; accent-color: var(--cyan);">
+          </div>
+        </div>
+
+        <div class="instrument-bar" id="drumBar">
+          <span class="detected-label">drums</span>
+          <button class="drum-toggle-btn" id="drumKickBtn"   data-drum="kick">kick</button>
+          <button class="drum-toggle-btn" id="drumSnareBtn"  data-drum="snare">snare</button>
+          <button class="drum-toggle-btn" id="drumHatBtn"    data-drum="hat">hi-hat</button>
+          <button class="drum-toggle-btn" id="drumClapBtn"   data-drum="clap">clap</button>
         </div>
 
         <div class="scale-cards" id="scaleCards"></div>
       </div>
     </div>
 
+    <!-- ── EDITOR ── -->
+    <div id="screen-editor" class="screen">
+      <div class="editor-screen" style="padding-top:44px;">
+        <div class="results-top">
+          <div>
+            <h2 class="results-title">Edit & Export</h2>
+            <p class="results-sub">Adjust chords and melody timing</p>
+          </div>
+          <div style="display:flex;gap:10px;align-items:center">
+            <button class="inst-btn" id="editorRefineBtn" style="border-color:#ff8c42; color:#ff8c42; white-space: nowrap;">✨ auto-refine</button>
+            <button class="re-record-btn" id="editorBackBtn">← back</button>
+            <button class="save-melody-btn" id="editorExportBtn">⤓ export audio</button>
+          </div>
+        </div>
+        
+        <div class="mr-roll-wrap" style="margin-bottom: 24px;">
+           <div class="mr-roll-header">
+            <span class="trail-label">timing &amp; position</span>
+            <div class="mr-bpm-row">
+              <span class="detected-label">bpm</span>
+              <button class="inst-btn" id="edBpmDown">−</button>
+              <span class="nb-octave-label" id="edBpmLabel">100</span>
+              <button class="inst-btn" id="edBpmUp">+</button>
+            </div>
+          </div>
+          <div class="mr-roll-outer">
+            <div class="mr-roll-pitch-labels" id="edPitchLabels"></div>
+            <div class="mr-roll-scroll" id="edRollScroll">
+              <canvas id="edRollCanvas"></canvas>
+            </div>
+          </div>
+          <p class="mr-roll-hint">Drag notes up/down for pitch, left/right for timing. Drag chord blocks left/right.</p>
+        </div>
+        
+        <div class="mr-bottom-row">
+          <button class="nb-play-seq-btn" id="edPlayBtn">▶ play</button>
+          <span style="font-family:'Space Mono',monospace; font-size:11px; color:var(--text3); margin-left:20px;" id="edPlayStatus"></span>
+        </div>
+      </div>
+    </div>
+
   </main>
+</div>
+
+<!-- ── Save melody modal ── -->
+<div id="saveModal" class="save-modal-overlay" style="display:none">
+  <div class="save-modal">
+    <h3 class="save-modal-title">Save melody</h3>
+    <div class="save-modal-field">
+      <label class="save-modal-label">Name</label>
+      <input id="saveModalName" class="save-modal-input" type="text" maxlength="60" placeholder="My Melody" />
+    </div>
+    <div class="save-modal-btns">
+      <button class="save-modal-cancel" id="saveModalCancel">Cancel</button>
+      <button class="save-modal-confirm" id="saveModalConfirm">✦ Save</button>
+    </div>
+  </div>
 </div>
 
 <!-- Scripts: load in dependency order -->
@@ -252,6 +340,7 @@
 <script src="js/mic-review.js"></script>
 <script src="js/note-builder.js"></script>
 <script src="js/results.js"></script>
+<script src="js/editor.js"></script>
 <script src="js/app.js"></script>
 </body>
 </html>

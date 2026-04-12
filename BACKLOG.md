@@ -227,7 +227,7 @@ An option to play the melody but with a softer synth note showing what the neare
 
 ## Notes for Claude
 
-- The active HTML file is `index (9).html` (note the space and parentheses)
+- The active HTML file is `index.html`
 - Active JS is in `js/` subfolder (not the root-level `.js` files which are older copies)
 - Active CSS is `css/styles.css`
 - Never commit/push without user saying "ok push" or "commit and push"

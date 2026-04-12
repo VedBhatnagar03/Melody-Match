@@ -9,10 +9,18 @@ let nbBpm   = 100;
 let nbBars  = 4;
 let nbSeqPlaying = false;
 
-// ── Grid constants ──
-const NB_ROW_H   = 28;
-const NB_BEAT_W  = 48;
+// ── Grid constants (mutable for zoom) ──
+let NB_ROW_H   = 28;
+let NB_BEAT_W  = 48;
 const NB_RESIZE_HANDLE = 8;
+
+// ── Selection / copy-paste state ──
+let nbSelected  = new Set(); // indices of selected notes
+let nbClipboard = [];        // [{midi,pc,freq,beat,dur}]
+let nbBoxSel    = null;      // {startX,startY,endX,endY} while rubber-banding
+
+// Metronome
+let nbMetronomeEnabled = false;
 
 const NB_WHITES = [
   { name:'C', semi:0 }, { name:'D', semi:2 }, { name:'E', semi:4 },
@@ -81,11 +89,12 @@ function nbDrawRoll() {
     const y = r * NB_ROW_H + 3;
     const w = Math.max(NB_BEAT_W * 0.4, dur * NB_BEAT_W - 4);
     const h = NB_ROW_H - 6;
-    const isActive = nbDragging?.noteIdx === i;
+    const isActive   = nbDragging?.noteIdx === i;
+    const isSelected = nbSelected.has(i);
 
-    ctx.shadowColor = '#00d4ff';
-    ctx.shadowBlur  = isActive ? 12 : 4;
-    ctx.fillStyle   = isActive ? '#40e0ff' : '#00d4ff';
+    ctx.shadowColor = isSelected ? '#a78bfa' : '#00d4ff';
+    ctx.shadowBlur  = isActive ? 12 : isSelected ? 10 : 4;
+    ctx.fillStyle   = isActive ? '#40e0ff' : isSelected ? '#c4b5fd' : '#00d4ff';
     ctx.beginPath();
     ctx.roundRect(x, y, w, h, 3);
     ctx.fill();
@@ -113,6 +122,21 @@ function nbDrawRoll() {
     ctx.fillText(pcToName(note.pc), x + (w - NB_RESIZE_HANDLE) / 2, y + h / 2);
   });
 
+  // Box selection rectangle
+  if (nbBoxSel) {
+    const bx = Math.min(nbBoxSel.startX, nbBoxSel.endX);
+    const by = Math.min(nbBoxSel.startY, nbBoxSel.endY);
+    const bw = Math.abs(nbBoxSel.endX - nbBoxSel.startX);
+    const bh = Math.abs(nbBoxSel.endY - nbBoxSel.startY);
+    ctx.strokeStyle = 'rgba(167,139,250,0.9)';
+    ctx.fillStyle   = 'rgba(167,139,250,0.08)';
+    ctx.lineWidth   = 1.5;
+    ctx.setLineDash([4, 3]);
+    ctx.beginPath(); ctx.roundRect(bx, by, bw, bh, 2);
+    ctx.fill(); ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
   // Playhead
   if (nbPlayhead >= 0) {
     const x = nbPlayhead * NB_BEAT_W;
@@ -124,14 +148,18 @@ function nbDrawRoll() {
   // Update pitch labels sidebar
   const sidebar = document.getElementById('nbPitchLabels');
   sidebar.innerHTML = '';
+  const fontSize = Math.max(7, Math.min(13, NB_ROW_H * 0.45));
   if (rows.length === 0) {
     sidebar.style.height = NB_ROW_H + 'px';
     return;
   }
+  sidebar.style.height = H + 'px';
   rows.forEach(midi => {
     const lbl = document.createElement('div');
     lbl.className = 'nb-pitch-label';
-    lbl.style.height = NB_ROW_H + 'px';
+    lbl.style.height   = NB_ROW_H + 'px';
+    lbl.style.fontSize = fontSize + 'px';
+    lbl.style.flexShrink = '0';
     lbl.textContent = pcToName(midi % 12) + (Math.floor(midi / 12) - 1);
     sidebar.appendChild(lbl);
   });
@@ -162,9 +190,8 @@ function nbSnapBeat(beat) {
   return Math.max(0, Math.min(nbTotalBeats() - 1, Math.round(beat * 2) / 2));
 }
 
-// ── Add note at next free beat slot ──
-function nbAddNote(semi) {
-  const midi = (nbOctave + 1) * 12 + semi;
+// ── Add note at next free beat slot (by MIDI number) ──
+function nbAddNoteByMidi(midi) {
   const pc   = midi % 12;
   const freq = 440 * Math.pow(2, (midi - 69) / 12);
 
@@ -179,8 +206,13 @@ function nbAddNote(semi) {
   nbUpdateUI();
   nbDrawRoll();
 
-  const key = document.querySelector(`#nbKeyboard [data-semi="${semi}"]`);
+  const key = document.querySelector(`#nbKeyboard [data-midi="${midi}"]`);
   if (key) { key.classList.add('lit'); setTimeout(() => key.classList.remove('lit'), 200); }
+}
+
+// ── Legacy helper (used by octave-based calls if any) ──
+function nbAddNote(semi) {
+  nbAddNoteByMidi((nbOctave + 1) * 12 + semi);
 }
 
 function nbUpdateUI() {
@@ -207,40 +239,115 @@ function nbCanvasXY(e) {
 function nbOnMouseDown(e) {
   const { x, y } = nbCanvasXY(e);
   const hit = nbHitNote(x, y);
-  if (!hit) return;
+
+  if (!hit) {
+    // Start box selection on empty area
+    if (!e.shiftKey) nbSelected.clear();
+    nbBoxSel = { startX: x, startY: y, endX: x, endY: y };
+    nbDrawRoll();
+    return;
+  }
+
   const n = nbSequence[hit.idx];
-  nbDragging = { noteIdx: hit.idx, mode: hit.mode, startX: x, origBeat: n.beat, origDur: n.dur ?? 1 };
-  nbCanvas.style.cursor = hit.mode === 'resize' ? 'ew-resize' : 'grabbing';
+
+  if (e.shiftKey) {
+    // Shift-click toggles selection
+    if (nbSelected.has(hit.idx)) nbSelected.delete(hit.idx);
+    else nbSelected.add(hit.idx);
+    nbDrawRoll();
+    return;
+  }
+
+  if (hit.mode === 'resize') {
+    nbDragging = { noteIdx: hit.idx, mode: 'resize', startX: x, startY: y, origBeat: n.beat, origDur: n.dur ?? 1 };
+    nbCanvas.style.cursor = 'ew-resize';
+    nbDrawRoll();
+    return;
+  }
+
+  // Move: if clicking a selected note, move the whole group; otherwise select just this note
+  if (!nbSelected.has(hit.idx)) {
+    nbSelected.clear();
+    nbSelected.add(hit.idx);
+  }
+
+  // Store original beats and midis for all selected notes
+  const origBeats = {};
+  const origMidis = {};
+  nbSelected.forEach(i => {
+    origBeats[i] = nbSequence[i].beat;
+    origMidis[i] = nbSequence[i].midi;
+  });
+
+  nbDragging = { noteIdx: hit.idx, mode: 'move', startX: x, startY: y, origBeat: n.beat, origDur: n.dur ?? 1, origMidi: n.midi, origBeats, origMidis };
+  nbCanvas.style.cursor = 'grabbing';
   nbDrawRoll();
 }
 
 function nbOnMouseMove(e) {
+  const { x, y } = nbCanvasXY(e);
+
+  if (nbBoxSel) {
+    nbBoxSel.endX = x;
+    nbBoxSel.endY = y;
+    // Update selection from box
+    const rows = nbGetRows();
+    const bx1 = Math.min(nbBoxSel.startX, x);
+    const bx2 = Math.max(nbBoxSel.startX, x);
+    const by1 = Math.min(nbBoxSel.startY, y);
+    const by2 = Math.max(nbBoxSel.startY, y);
+    nbSelected.clear();
+    nbSequence.forEach((n, i) => {
+      const r = rows.indexOf(n.midi);
+      if (r < 0) return;
+      const dur = n.dur ?? 1;
+      const nx1 = n.beat * NB_BEAT_W + 2;
+      const nx2 = nx1 + Math.max(NB_BEAT_W * 0.4, dur * NB_BEAT_W - 4);
+      const ny1 = r * NB_ROW_H;
+      const ny2 = ny1 + NB_ROW_H;
+      if (nx1 < bx2 && nx2 > bx1 && ny1 < by2 && ny2 > by1) nbSelected.add(i);
+    });
+    nbDrawRoll();
+    return;
+  }
+
   if (!nbDragging) {
-    const { x, y } = nbCanvasXY(e);
     const hit = nbHitNote(x, y);
     nbCanvas.style.cursor = !hit ? 'crosshair' : hit.mode === 'resize' ? 'ew-resize' : 'grab';
     return;
   }
-  const { x } = nbCanvasXY(e);
+
   const dx = x - nbDragging.startX;
-  const beatDelta = dx / NB_BEAT_W;
-  const n = nbSequence[nbDragging.noteIdx];
+  const dy = y - (nbDragging.startY ?? y);
+  const beatDelta  = dx / NB_BEAT_W;
+  const pitchDelta = -Math.round(dy / NB_ROW_H); // up = higher midi
+
   if (nbDragging.mode === 'move') {
-    n.beat = nbSnapBeat(nbDragging.origBeat + beatDelta);
+    // Move all selected notes together (horizontal + vertical)
+    nbSelected.forEach(i => {
+      nbSequence[i].beat = nbSnapBeat(nbDragging.origBeats[i] + beatDelta);
+      const newMidi = Math.max(21, Math.min(108, nbDragging.origMidis[i] + pitchDelta));
+      nbSequence[i].midi = newMidi;
+      nbSequence[i].pc   = newMidi % 12;
+      nbSequence[i].freq = 440 * Math.pow(2, (newMidi - 69) / 12);
+    });
   } else {
+    const n = nbSequence[nbDragging.noteIdx];
     n.dur = Math.max(0.5, Math.round((nbDragging.origDur + beatDelta) * 2) / 2);
   }
   nbDrawRoll();
 }
 
 function nbOnMouseUp(e) {
-  if (!nbDragging) return;
-  const { x } = nbCanvasXY(e);
-  const moved = Math.abs(x - nbDragging.startX);
-  if (moved < 4 && nbDragging.mode === 'move') {
-    nbSequence.splice(nbDragging.noteIdx, 1);
-    nbUpdateUI();
+  if (nbBoxSel) {
+    nbBoxSel = null;
+    nbDrawRoll();
+    return;
   }
+
+  if (!nbDragging) return;
+
+  // No delete on click — click selects, Backspace/Delete removes
   nbDragging = null;
   nbCanvas.style.cursor = 'crosshair';
   nbDrawRoll();
@@ -249,6 +356,28 @@ function nbOnMouseUp(e) {
 function nbOnTouchStart(e) { e.preventDefault(); nbOnMouseDown(e.touches[0]); }
 function nbOnTouchMove(e)  { e.preventDefault(); nbOnMouseMove(e.touches[0]); }
 function nbOnTouchEnd(e)   { e.preventDefault(); nbOnMouseUp(e.changedTouches[0]); }
+
+// ── Copy / paste ──
+function nbCopySelected() {
+  if (nbSelected.size === 0) return;
+  const sel = [...nbSelected].map(i => nbSequence[i]);
+  const minBeat = Math.min(...sel.map(n => n.beat));
+  nbClipboard = sel.map(n => ({ ...n, beat: n.beat - minBeat })); // normalise to beat 0
+}
+
+function nbPasteClipboard() {
+  if (nbClipboard.length === 0) return;
+  const maxBeat = nbSequence.length > 0 ? Math.max(...nbSequence.map(n => n.beat + (n.dur ?? 1))) : 0;
+  const insertBeat = nbSnapBeat(maxBeat);
+  nbSelected.clear();
+  nbClipboard.forEach(n => {
+    const newNote = { ...n, beat: nbSnapBeat(insertBeat + n.beat) };
+    nbSequence.push(newNote);
+    nbSelected.add(nbSequence.length - 1);
+  });
+  nbUpdateUI();
+  nbDrawRoll();
+}
 
 // ── Play single note preview ──
 async function nbPlayNote(midi) {
@@ -296,6 +425,24 @@ async function nbPlaySequence() {
     }, delay);
   });
 
+  // Metronome clicks
+  if (nbMetronomeEnabled) {
+    const clickSynth = new Tone.MembraneSynth({
+      pitchDecay: 0.008, octaves: 2,
+      envelope: { attack: 0.001, decay: 0.08, sustain: 0, release: 0.05 },
+    }).toDestination();
+    clickSynth.volume.value = -6;
+    const totalBeats = nbTotalBeats();
+    for (let b = 0; b < totalBeats; b++) {
+      const isDownbeat = b % 4 === 0;
+      setTimeout(() => {
+        if (playGeneration !== gen) return;
+        clickSynth.triggerAttackRelease(isDownbeat ? 'C2' : 'C3', '32n', Tone.now() + 0.01);
+      }, b * secPerBeat * 1000);
+    }
+    setTimeout(() => { try { clickSynth.dispose(); } catch(e) {} }, (totalSec + 0.5) * 1000);
+  }
+
   function animatePlayhead() {
     if (!nbSeqPlaying) return;
     const elapsed = (performance.now() - t0) / 1000;
@@ -313,31 +460,103 @@ async function nbPlaySequence() {
   requestAnimationFrame(animatePlayhead);
 }
 
-// ── Build keyboard ──
+// ── Keyboard layout constants ──
+const NB_KB_LOW  = 2;  // C2
+const NB_KB_HIGH = 5;  // B5  (4 octaves: C2–B5)
+const WHITE_W    = 36; // white key width in px
+const WHITE_GAP  = 2;  // margin-right on each white key
+const WHITE_SLOT = WHITE_W + WHITE_GAP; // total horizontal space per white key = 38px
+const BLACK_W    = 22; // black key width
+
+// Computer keyboard → MIDI mapping (standard DAW two-row layout)
+// Lower row (z/x/c...): C3 octave  |  Home row (a/s/d...): C4 octave  |  Top row (q/w/e...): one octave up whites + sharps
+const KB_MAP = {
+  // C3 octave — whites on z row, sharps on a row
+  'z':48, 's':49, 'x':50, 'd':51, 'c':52,
+  'v':53, 'g':54, 'b':55, 'h':56, 'n':57, 'j':58, 'm':59,
+  // C4 octave — whites on q row, sharps on number row
+  'q':60, '2':61, 'w':62, '3':63, 'e':64,
+  'r':65, '5':66, 't':67, '6':68, 'y':69, '7':70, 'u':71,
+  // C5 octave — whites continue on i/o/p, sharps on 9/0
+  'i':72, '9':73, 'o':74, '0':75, 'p':76,
+};
+
+// Build reverse map midi → key label for displaying on keys
+const MIDI_TO_KEY = {};
+for (const [k, midi] of Object.entries(KB_MAP)) MIDI_TO_KEY[midi] = k.toUpperCase();
+
 function buildKeyboard() {
   const kb = document.getElementById('nbKeyboard');
   kb.innerHTML = '';
-  const WHITE_W = 46;
 
-  NB_WHITES.forEach(k => {
-    const key = document.createElement('div');
-    key.className = 'nb-key white';
-    key.textContent = k.name;
-    key.dataset.semi = k.semi;
-    kb.appendChild(key);
-  });
+  let whiteIdx = 0;
 
-  NB_BLACKS.forEach(k => {
-    const key = document.createElement('div');
-    key.className = 'nb-key black';
-    key.textContent = k.name;
-    key.dataset.semi = k.semi;
-    key.style.left = (k.after * WHITE_W + WHITE_W - 15) + 'px';
-    kb.appendChild(key);
-  });
+  for (let oct = NB_KB_LOW; oct <= NB_KB_HIGH; oct++) {
+    const octStart = whiteIdx;
 
-  kb.style.width = (NB_WHITES.length * WHITE_W) + 'px';
+    // White keys
+    NB_WHITES.forEach(k => {
+      const midi = (oct + 1) * 12 + k.semi;
+      const key = document.createElement('div');
+      key.className = 'nb-key white' + (k.semi === 0 ? ' octave-c' : '');
+      key.dataset.midi = midi;
+
+      // Two-line label: note name on top, keyboard shortcut below
+      const noteName = k.semi === 0 ? `C${oct}` : k.name;
+      const kbLabel  = MIDI_TO_KEY[midi] || '';
+      key.innerHTML = `<span class="key-note">${noteName}</span>${kbLabel ? `<span class="key-kb">${kbLabel}</span>` : ''}`;
+
+      kb.appendChild(key);
+      whiteIdx++;
+    });
+
+    // Black keys — positioned absolutely within .nb-keyboard
+    // Each black key sits centred between its two flanking white keys.
+    // The centre of black key after white index i = i * WHITE_SLOT + WHITE_W - (BLACK_W / 2)
+    NB_BLACKS.forEach(k => {
+      const midi = (oct + 1) * 12 + k.semi;
+      const key = document.createElement('div');
+      key.className = 'nb-key black';
+      key.dataset.midi = midi;
+
+      const whiteAfterIdx = octStart + k.after; // index of the white key this black sits after
+      const leftPx = whiteAfterIdx * WHITE_SLOT + WHITE_W - Math.floor(BLACK_W / 2);
+      key.style.left = leftPx + 'px';
+
+      const kbLabel = MIDI_TO_KEY[midi] || '';
+      key.innerHTML = `<span class="key-note">${k.name}</span>${kbLabel ? `<span class="key-kb">${kbLabel}</span>` : ''}`;
+
+      kb.appendChild(key);
+    });
+  }
+
+  kb.style.width = (whiteIdx * WHITE_SLOT) + 'px';
 }
+
+// ── Computer keyboard playback ──
+const _nbKeysHeld = new Set();
+document.addEventListener('keydown', e => {
+  if (e.repeat || e.target.tagName === 'INPUT') return;
+  if (e.ctrlKey || e.metaKey || e.altKey) return; // leave shortcuts to app.js
+  const midi = KB_MAP[e.key.toLowerCase()];
+  if (!midi || _nbKeysHeld.has(midi)) return;
+  // Only fire when note builder screen is active
+  const nbScreen = document.getElementById('screen-notebuilder');
+  if (!nbScreen || !nbScreen.classList.contains('active')) return;
+  _nbKeysHeld.add(midi);
+  nbAddNoteByMidi(midi);
+  nbPlayNote(midi);
+  // Light up the key
+  const keyEl = document.querySelector(`#nbKeyboard [data-midi="${midi}"]`);
+  if (keyEl) keyEl.classList.add('lit');
+});
+document.addEventListener('keyup', e => {
+  const midi = KB_MAP[e.key.toLowerCase()];
+  if (!midi) return;
+  _nbKeysHeld.delete(midi);
+  const keyEl = document.querySelector(`#nbKeyboard [data-midi="${midi}"]`);
+  if (keyEl) keyEl.classList.remove('lit');
+});
 
 function nbInitRoll() {
   nbCanvas = document.getElementById('nbRollCanvas');
@@ -357,10 +576,10 @@ function nbInitRoll() {
 // ── Event wiring ──
 document.getElementById('nbKeyboard').addEventListener('click', e => {
   const key = e.target.closest('.nb-key');
-  if (!key) return;
-  const semi = +key.dataset.semi;
-  nbAddNote(semi);
-  nbPlayNote((nbOctave + 1) * 12 + semi);
+  if (!key || !key.dataset.midi) return;
+  const midi = +key.dataset.midi;
+  nbAddNoteByMidi(midi);
+  nbPlayNote(midi);
 });
 
 document.getElementById('nbPlaySeqBtn').addEventListener('click', nbPlaySequence);
@@ -375,10 +594,10 @@ document.getElementById('nbClearBtn').addEventListener('click', () => {
   nbDrawRoll();
 });
 
-document.getElementById('nbOctDown').addEventListener('click', () => {
+document.getElementById('nbOctDown')?.addEventListener('click', () => {
   if (nbOctave > 2) { nbOctave--; updateOctaveLabel(); }
 });
-document.getElementById('nbOctUp').addEventListener('click', () => {
+document.getElementById('nbOctUp')?.addEventListener('click', () => {
   if (nbOctave < 6) { nbOctave++; updateOctaveLabel(); }
 });
 

@@ -98,6 +98,7 @@ document.getElementById('reRecordBtn').addEventListener('click', () => {
   mrTakes      = [];
   mrSequence   = [];
   mrAddingTake = false;
+  currentSavedIdx = -1;
   showScreen('idle');
 });
 
@@ -105,6 +106,7 @@ document.getElementById('demoBtn').addEventListener('click', () => {
   nbSequence = [];
   nbSeqPlaying = false;
   nbPlayhead = -1;
+  currentSavedIdx = -1;
   nbUpdateUI();
   nbDrawRoll();
   showScreen('notebuilder');
@@ -151,6 +153,15 @@ document.getElementById('mrResetBtn').addEventListener('click', () => {
   mrUpdateUI();
 });
 
+document.getElementById('mrMetronomeBtn').addEventListener('click', () => {
+  mrMetronomeEnabled = !mrMetronomeEnabled;
+  const btn = document.getElementById('mrMetronomeBtn');
+  btn.style.borderColor = mrMetronomeEnabled ? '#fbbf24' : '';
+  btn.style.color       = mrMetronomeEnabled ? '#fbbf24' : '';
+  btn.style.background  = mrMetronomeEnabled ? 'rgba(251,191,36,0.15)' : '';
+  btn.textContent       = mrMetronomeEnabled ? '♩ metronome on' : '♩ metronome';
+});
+
 document.getElementById('mrAutoTuneBtn').addEventListener('click', () => {
   if (typeof mrAutoTuneSequence !== 'undefined') mrAutoTuneSequence();
 });
@@ -178,7 +189,7 @@ document.getElementById('mrPlayRawBtn').addEventListener('click', () => {
   };
 });
 
-document.getElementById('mrPlayBtn').addEventListener('click', async () => {
+async function mrStartPlaybackFrom(startBeat) {
   if (mrSequence.length === 0) return;
   stopPlayback();
 
@@ -187,15 +198,19 @@ document.getElementById('mrPlayBtn').addEventListener('click', async () => {
   const secPerBeat = 60 / mrBpm;
   const now = Tone.now() + 0.05;
   const gen = ++playGeneration;
-  const totalLen = mrTotalBeats() * secPerBeat;
+  const totalBeats = mrTotalBeats();
+  const totalLen   = totalBeats * secPerBeat;
+  const startSec   = startBeat * secPerBeat;
 
-  mrPlayhead = 0;
+  mrPlayhead = startBeat;
   mrDrawRoll();
 
+  // Schedule melody notes
   const sorted = [...mrSequence].sort((a, b) => a.beat - b.beat);
   sorted.forEach(n => {
-    const t   = now + n.beat * secPerBeat;
-    const dur = n.dur * secPerBeat * 0.88;
+    if (n.beat + (n.dur ?? 0.5) <= startBeat) return;
+    const t     = now + (n.beat - startBeat) * secPerBeat;
+    const dur   = n.dur * secPerBeat * 0.88;
     const delay = Math.max(0, (t - Tone.now()) * 1000);
     setTimeout(() => {
       if (playGeneration !== gen) return;
@@ -203,18 +218,96 @@ document.getElementById('mrPlayBtn').addEventListener('click', async () => {
     }, delay);
   });
 
+  // Schedule metronome clicks
+  if (mrMetronomeEnabled) {
+    const clickSynth = new Tone.MembraneSynth({
+      pitchDecay: 0.008, octaves: 2,
+      envelope: { attack: 0.001, decay: 0.08, sustain: 0, release: 0.05 },
+    }).toDestination();
+    clickSynth.volume.value = -6;
+
+    const startBeatInt = Math.ceil(startBeat);
+    for (let b = startBeatInt; b < totalBeats; b++) {
+      const isDownbeat = b % 4 === 0;
+      const delay = (b - startBeat) * secPerBeat * 1000;
+      setTimeout(() => {
+        if (playGeneration !== gen) return;
+        clickSynth.triggerAttackRelease(
+          isDownbeat ? 'C2' : 'C3',
+          '32n',
+          Tone.now() + 0.01
+        );
+      }, delay);
+    }
+
+    // Dispose click synth after playback ends
+    setTimeout(() => { try { clickSynth.dispose(); } catch(e) {} },
+      (totalLen - startSec + 0.5) * 1000);
+  }
+
   const startTime = performance.now();
   function animPlayhead() {
     if (playGeneration !== gen) { mrPlayhead = -1; mrDrawRoll(); return; }
     const elapsed = (performance.now() - startTime) / 1000;
-    mrPlayhead = elapsed / secPerBeat;
+    mrPlayhead = startBeat + elapsed / secPerBeat;
     mrDrawRoll();
-    if (elapsed < totalLen) requestAnimationFrame(animPlayhead);
+    if (elapsed < totalLen - startSec) requestAnimationFrame(animPlayhead);
     else { mrPlayhead = -1; mrDrawRoll(); }
   }
   requestAnimationFrame(animPlayhead);
 
-  setTimeout(() => { if (playGeneration === gen) stopPlayback(); }, (totalLen + 1) * 1000);
+  setTimeout(() => { if (playGeneration === gen) stopPlayback(); }, (totalLen - startSec + 1) * 1000);
+}
+
+// Called when user drags the playhead and releases
+function mrSeekPlayback(beat) {
+  // Only restart if currently playing
+  if (playGeneration > 0 && mrPlayhead >= 0) mrStartPlaybackFrom(beat);
+}
+
+document.getElementById('mrPlayBtn').addEventListener('click', () => mrStartPlaybackFrom(mrPlayhead >= 0 ? mrPlayhead : 0));
+
+document.getElementById('mrCopyBtn').addEventListener('click', () => {
+  mrCopySelected();
+  const pasteBtn = document.getElementById('mrPasteBtn');
+  if (pasteBtn) pasteBtn.disabled = mrClipboard.length === 0;
+});
+
+document.getElementById('mrPasteBtn').addEventListener('click', () => {
+  mrPasteClipboard();
+});
+
+// Keyboard shortcuts for mic-review screen
+document.addEventListener('keydown', e => {
+  const mrScreen = document.getElementById('screen-mic-review');
+  if (!mrScreen || !mrScreen.classList.contains('active')) return;
+  if (e.target.tagName === 'INPUT') return;
+
+  if (e.key === 'a' && (e.ctrlKey || e.metaKey)) {
+    e.preventDefault();
+    mrSelected = new Set(mrSequence.map((_, i) => i));
+    mrDrawRoll();
+  } else if (e.key === 'c' && (e.ctrlKey || e.metaKey)) {
+    e.preventDefault();
+    mrCopySelected();
+    const pasteBtn = document.getElementById('mrPasteBtn');
+    if (pasteBtn) pasteBtn.disabled = mrClipboard.length === 0;
+  } else if (e.key === 'v' && (e.ctrlKey || e.metaKey)) {
+    e.preventDefault();
+    mrPasteClipboard();
+  } else if (e.key === 'Delete' || e.key === 'Backspace') {
+    if (mrSelected.size > 0) {
+      e.preventDefault();
+      const toDelete = [...mrSelected].sort((a, b) => b - a);
+      toDelete.forEach(i => mrSequence.splice(i, 1));
+      mrSelected.clear();
+      mrUpdateUI();
+      mrDrawRoll();
+    }
+  } else if (e.key === 'Escape') {
+    mrSelected.clear();
+    mrDrawRoll();
+  }
 });
 
 document.getElementById('mrAnalyseBtn').addEventListener('click', () => {
@@ -305,6 +398,9 @@ document.getElementById('drumBar')?.addEventListener('click', e => {
 ─────────────────────────────────────────────── */
 const STORAGE_KEY = 'melodymatch_saved';
 
+// Index of the currently loaded saved melody (-1 = unsaved / new)
+let currentSavedIdx = -1;
+
 function savedLoad() {
   try { return JSON.parse(localStorage.getItem(STORAGE_KEY)) || []; }
   catch(e) { return []; }
@@ -356,6 +452,7 @@ function savedLoadMelody(idx) {
   if (!m) return;
 
   stopPlayback();
+  currentSavedIdx = idx;
 
   if (m.source === 'builder' && m.sequence) {
     nbSequence = m.sequence.map(n => ({ ...n }));
@@ -374,70 +471,213 @@ function savedLoadMelody(idx) {
   }
 }
 
-function savedPromptName(defaultName) {
-  const name = window.prompt('Name this melody:', defaultName);
-  return name && name.trim() ? name.trim() : null;
+// ── Save modal ──
+let _saveModalCallback = null;
+
+function savedShowModal(defaultName, onConfirm) {
+  const overlay = document.getElementById('saveModal');
+  const input   = document.getElementById('saveModalName');
+  input.value   = defaultName;
+  overlay.style.display = 'flex';
+  setTimeout(() => { input.focus(); input.select(); }, 50);
+  _saveModalCallback = onConfirm;
 }
+
+document.getElementById('saveModalConfirm').addEventListener('click', () => {
+  const name = document.getElementById('saveModalName').value.trim();
+  if (!name) return;
+  document.getElementById('saveModal').style.display = 'none';
+  if (_saveModalCallback) { _saveModalCallback(name); _saveModalCallback = null; }
+});
+
+document.getElementById('saveModalCancel').addEventListener('click', () => {
+  document.getElementById('saveModal').style.display = 'none';
+  _saveModalCallback = null;
+});
+
+document.getElementById('saveModalName').addEventListener('keydown', e => {
+  if (e.key === 'Enter') document.getElementById('saveModalConfirm').click();
+  if (e.key === 'Escape') document.getElementById('saveModalCancel').click();
+});
+
+document.getElementById('saveModal').addEventListener('click', e => {
+  if (e.target === document.getElementById('saveModal')) document.getElementById('saveModalCancel').click();
+});
 
 function savedSaveFromResults() {
   if (!detectedPitches || detectedPitches.length === 0) return;
-  const defaultName = document.getElementById('bestMatchName').textContent || 'My Melody';
-  const name = savedPromptName(defaultName);
-  if (!name) return;
-
   const list = savedLoad();
   const isBuilder = pitchSource === 'builder';
-  list.unshift({
-    name,
-    date: new Date().toLocaleDateString(),
-    noteCount: detectedPitches.length,
-    bpm: isBuilder ? nbBpm : (window._lastBpm || 100),
-    bars: isBuilder ? nbBars : 4,
-    source: pitchSource || 'mic',
-    pitches: detectedPitches.map(p => ({ ...p })),
-    sequence: isBuilder ? nbSequence.map(n => ({ ...n })) : null,
-    chords: window._lastBars ? window._lastBars.map(b => ({...b})) : null,
-    scale: window._lastScaleName || null,
-  });
-  savedWrite(list);
-  savedRender();
+  const isOverwrite = currentSavedIdx >= 0 && currentSavedIdx < list.length;
 
-  const btn = document.getElementById('saveMelodyBtn');
-  btn.textContent = '✓ saved!';
-  btn.classList.add('saved');
-  setTimeout(() => { btn.textContent = '✦ save melody'; btn.classList.remove('saved'); }, 2000);
+  const doSave = (name) => {
+    const entry = {
+      name,
+      date: new Date().toLocaleDateString(),
+      noteCount: detectedPitches.length,
+      bpm: isBuilder ? nbBpm : (window._lastBpm || 100),
+      bars: isBuilder ? nbBars : 4,
+      source: pitchSource || 'mic',
+      pitches: detectedPitches.map(p => ({ ...p })),
+      sequence: isBuilder ? nbSequence.map(n => ({ ...n })) : null,
+      chords: window._lastBars ? window._lastBars.map(b => ({...b})) : null,
+      scale: window._lastScaleName || null,
+    };
+    const freshList = savedLoad();
+    if (isOverwrite) {
+      freshList[currentSavedIdx] = entry;
+    } else {
+      freshList.unshift(entry);
+      currentSavedIdx = 0;
+    }
+    savedWrite(freshList);
+    savedRender();
+    const btn = document.getElementById('saveMelodyBtn');
+    btn.textContent = '✓ saved!';
+    btn.classList.add('saved');
+    setTimeout(() => { btn.textContent = '✦ save melody'; btn.classList.remove('saved'); }, 2000);
+  };
+
+  if (isOverwrite) {
+    // Silent overwrite — no modal
+    doSave(list[currentSavedIdx].name);
+  } else {
+    const defaultName = document.getElementById('bestMatchName').textContent || 'My Melody';
+    savedShowModal(defaultName, doSave);
+  }
 }
 
 function savedSaveFromBuilder() {
   if (nbSequence.length === 0) return;
-  const name = savedPromptName('My Melody');
-  if (!name) return;
-
   const list = savedLoad();
-  list.unshift({
-    name,
-    date: new Date().toLocaleDateString(),
-    noteCount: nbSequence.length,
-    bpm: nbBpm,
-    bars: nbBars,
-    source: 'builder',
-    pitches: [...nbSequence].sort((a,b) => a.beat - b.beat).map(n => ({
-      ...n,
-      time: n.beat * (60 / nbBpm) * 1000,
-    })),
-    sequence: nbSequence.map(n => ({ ...n })),
-  });
-  savedWrite(list);
-  savedRender();
+  const isOverwrite = currentSavedIdx >= 0 && currentSavedIdx < list.length;
 
-  const btn = document.getElementById('nbSaveMelodyBtn');
-  btn.textContent = '✓ saved!';
-  btn.classList.add('saved');
-  setTimeout(() => { btn.textContent = '✦ save'; btn.classList.remove('saved'); }, 2000);
+  const doSave = (name) => {
+    const entry = {
+      name,
+      date: new Date().toLocaleDateString(),
+      noteCount: nbSequence.length,
+      bpm: nbBpm,
+      bars: nbBars,
+      source: 'builder',
+      pitches: [...nbSequence].sort((a,b) => a.beat - b.beat).map(n => ({
+        ...n,
+        time: n.beat * (60 / nbBpm) * 1000,
+      })),
+      sequence: nbSequence.map(n => ({ ...n })),
+    };
+    const freshList = savedLoad();
+    if (isOverwrite) {
+      freshList[currentSavedIdx] = entry;
+    } else {
+      freshList.unshift(entry);
+      currentSavedIdx = 0;
+    }
+    savedWrite(freshList);
+    savedRender();
+    const btn = document.getElementById('nbSaveMelodyBtn');
+    btn.textContent = '✓ saved!';
+    btn.classList.add('saved');
+    setTimeout(() => { btn.textContent = '✦ save'; btn.classList.remove('saved'); }, 2000);
+  };
+
+  if (isOverwrite) {
+    doSave(list[currentSavedIdx].name);
+  } else {
+    savedShowModal('My Melody', doSave);
+  }
 }
 
 document.getElementById('saveMelodyBtn').addEventListener('click', savedSaveFromResults);
+
+document.getElementById('editMelodyBtn').addEventListener('click', () => {
+  stopPlayback();
+  // Load current melody into notebuilder
+  // Use mrSequence if available (mic-review path), else fall back to detectedPitches
+  let src, srcBpm, srcBars;
+  if (pitchSource === 'builder') {
+    src = nbSequence; srcBpm = nbBpm; srcBars = nbBars;
+  } else if (mrSequence && mrSequence.length > 0) {
+    src = mrSequence; srcBpm = mrBpm; srcBars = mrBars;
+  } else if (detectedPitches && detectedPitches.length > 0) {
+    // Convert raw pitches to sequence format
+    const bpm = window._lastBpm || 100;
+    const spb = 60 / bpm;
+    src = detectedPitches.map(p => ({
+      midi: p.midi, pc: p.pc, freq: p.freq,
+      beat: p.beat ?? ((p.time || 0) / 1000 / spb),
+      dur:  p.dur  ?? 1,
+    }));
+    srcBpm = bpm; srcBars = 4;
+  }
+
+  if (src && src.length > 0) {
+    nbSequence = src.map(n => ({ ...n }));
+    nbBpm  = srcBpm  || 100;
+    nbBars = srcBars || 4;
+    document.getElementById('nbBpmLabel').textContent  = nbBpm;
+    document.getElementById('nbBarsLabel').textContent = nbBars;
+    nbUpdateUI();
+    nbDrawRoll();
+  }
+  showScreen('notebuilder');
+});
+
+// Copy/paste buttons for notebuilder
+document.getElementById('nbCopyBtn').addEventListener('click', () => {
+  nbCopySelected();
+  const pasteBtn = document.getElementById('nbPasteBtn');
+  if (pasteBtn) pasteBtn.disabled = nbClipboard.length === 0;
+});
+
+document.getElementById('nbPasteBtn').addEventListener('click', () => {
+  nbPasteClipboard();
+});
+
+// Keyboard shortcuts for notebuilder screen
+document.addEventListener('keydown', e => {
+  const nbScreen = document.getElementById('screen-notebuilder');
+  if (!nbScreen || !nbScreen.classList.contains('active')) return;
+  if (e.target.tagName === 'INPUT') return;
+
+  if (e.key === 'a' && (e.ctrlKey || e.metaKey)) {
+    e.preventDefault();
+    nbSelected = new Set(nbSequence.map((_, i) => i));
+    nbDrawRoll();
+  } else if (e.key === 'c' && (e.ctrlKey || e.metaKey)) {
+    e.preventDefault();
+    nbCopySelected();
+    const pasteBtn = document.getElementById('nbPasteBtn');
+    if (pasteBtn) pasteBtn.disabled = nbClipboard.length === 0;
+  } else if (e.key === 'v' && (e.ctrlKey || e.metaKey)) {
+    e.preventDefault();
+    nbPasteClipboard();
+    const pasteBtn = document.getElementById('nbPasteBtn');
+    if (pasteBtn) pasteBtn.disabled = nbClipboard.length === 0;
+  } else if (e.key === 'Delete' || e.key === 'Backspace') {
+    if (nbSelected.size > 0) {
+      e.preventDefault();
+      const toDelete = [...nbSelected].sort((a, b) => b - a);
+      toDelete.forEach(i => nbSequence.splice(i, 1));
+      nbSelected.clear();
+      nbUpdateUI();
+      nbDrawRoll();
+    }
+  } else if (e.key === 'Escape') {
+    nbSelected.clear();
+    nbDrawRoll();
+  }
+});
 document.getElementById('nbSaveMelodyBtn').addEventListener('click', savedSaveFromBuilder);
+
+document.getElementById('nbMetronomeBtn').addEventListener('click', () => {
+  nbMetronomeEnabled = !nbMetronomeEnabled;
+  const btn = document.getElementById('nbMetronomeBtn');
+  btn.style.borderColor = nbMetronomeEnabled ? '#fbbf24' : '';
+  btn.style.color       = nbMetronomeEnabled ? '#fbbf24' : '';
+  btn.style.background  = nbMetronomeEnabled ? 'rgba(251,191,36,0.15)' : '';
+  btn.textContent       = nbMetronomeEnabled ? '♩ metronome on' : '♩ metronome';
+});
 
 // Capture bpm from results for use when saving
 const _origBuildResults = buildResults;
@@ -456,9 +696,74 @@ buildResults = function() {
 };
 
 /* ───────────────────────────────────────────────
+   ROLL RESIZE HANDLES
+   Vertical drag   → row height  (pitch zoom)
+   Horizontal drag → beat width  (time zoom)
+   Both axes together on corner drag
+─────────────────────────────────────────────── */
+function makeRollResizable(handleId, {
+  getRowH, setRowH, getBeatW, setBeatW, redraw,
+  minRowH = 14, maxRowH = 72,
+  minBeatW = 24, maxBeatW = 160,
+}) {
+  const handle = document.getElementById(handleId);
+  if (!handle) return;
+
+  let dragging = false;
+  let startX = 0, startY = 0;
+  let origRowH = 0, origBeatW = 0;
+
+  handle.addEventListener('mousedown', e => {
+    dragging  = true;
+    startX    = e.clientX;
+    startY    = e.clientY;
+    origRowH  = getRowH();
+    origBeatW = getBeatW();
+    document.body.style.cursor    = 'nwse-resize';
+    document.body.style.userSelect = 'none';
+    e.preventDefault();
+  });
+
+  document.addEventListener('mousemove', e => {
+    if (!dragging) return;
+    const dy = e.clientY - startY;
+    const dx = e.clientX - startX;
+    // 3px of drag = 1px of row height change; 2px drag = 1px of beat width change
+    const newRowH  = Math.max(minRowH,  Math.min(maxRowH,  origRowH  + Math.round(dy / 3)));
+    const newBeatW = Math.max(minBeatW, Math.min(maxBeatW, origBeatW + Math.round(dx / 2)));
+    setRowH(newRowH);
+    setBeatW(newBeatW);
+    redraw();
+  });
+
+  document.addEventListener('mouseup', () => {
+    if (!dragging) return;
+    dragging = false;
+    document.body.style.cursor    = '';
+    document.body.style.userSelect = '';
+  });
+}
+
+/* ───────────────────────────────────────────────
    INIT
 ─────────────────────────────────────────────── */
 buildKeyboard();
 nbInitRoll();
 mrInitRoll();
 savedRender();
+
+makeRollResizable('nbRollResizeHandle', {
+  getRowH:  () => NB_ROW_H,
+  setRowH:  v  => { NB_ROW_H  = v; },
+  getBeatW: () => NB_BEAT_W,
+  setBeatW: v  => { NB_BEAT_W = v; },
+  redraw:   ()  => nbDrawRoll(),
+});
+
+makeRollResizable('mrRollResizeHandle', {
+  getRowH:  () => MR_ROW_H,
+  setRowH:  v  => { MR_ROW_H  = v; },
+  getBeatW: () => MR_BEAT_W,
+  setBeatW: v  => { MR_BEAT_W = v; },
+  redraw:   ()  => mrDrawRoll(),
+});

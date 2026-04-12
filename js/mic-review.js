@@ -18,8 +18,19 @@ let mrCanvas, mrCtx;
 let mrDragging = null;  // {noteIdx, startX, origBeat, origDur, mode:'move'|'resize'}
 let mrPlayhead = -1;
 
-const MR_ROW_H         = 28;
-const MR_BEAT_W        = 54;
+// Playhead scrub
+let mrScrubbing = false;
+
+// Metronome
+let mrMetronomeEnabled = false;
+
+// Box selection / copy-paste
+let mrBoxSel = null;        // {startX, startY, endX, endY} while dragging
+let mrSelected = new Set(); // indices of selected notes
+let mrClipboard = [];       // copied notes [{midi,pc,beat,dur,conf}]
+
+let MR_ROW_H         = 28;
+let MR_BEAT_W        = 54;
 const MR_RESIZE_HANDLE = 8;
 
 // ── Helpers ──
@@ -190,14 +201,17 @@ function mrDrawRoll(highlightTake = null) {
     const y = r * MR_ROW_H + 3;
     const w = Math.max(MR_BEAT_W * 0.3, note.dur * MR_BEAT_W - 4);
     const h = MR_ROW_H - 6;
-    const isActive = mrDragging?.noteIdx === i;
+    const isActive   = mrDragging?.noteIdx === i;
+    const isSelected = mrSelected.has(i);
     const conf = note.conf ?? 1;
 
     const alpha = 0.5 + conf * 0.5;
     ctx.globalAlpha = alpha;
-    ctx.shadowColor = '#00d4ff';
-    ctx.shadowBlur  = isActive ? 14 : (conf > 0.7 ? 5 : 2);
-    ctx.fillStyle   = isActive ? '#40e0ff' : `hsl(${185 + (1 - conf) * 30}, 80%, ${50 + conf * 15}%)`;
+    ctx.shadowColor = isSelected ? '#a78bfa' : '#00d4ff';
+    ctx.shadowBlur  = isActive ? 14 : isSelected ? 10 : (conf > 0.7 ? 5 : 2);
+    ctx.fillStyle   = isActive ? '#40e0ff'
+                    : isSelected ? '#c4b5fd'
+                    : `hsl(${185 + (1 - conf) * 30}, 80%, ${50 + conf * 15}%)`;
     ctx.beginPath(); ctx.roundRect(x, y, w, h, 3); ctx.fill();
     ctx.shadowBlur  = 0;
     ctx.globalAlpha = 1;
@@ -214,22 +228,49 @@ function mrDrawRoll(highlightTake = null) {
     if (w > 20) ctx.fillText(pcToName(note.pc), x + (w - MR_RESIZE_HANDLE) / 2, y + h / 2);
   });
 
+  // Box selection rectangle
+  if (mrBoxSel) {
+    const bx = Math.min(mrBoxSel.startX, mrBoxSel.endX);
+    const by = Math.min(mrBoxSel.startY, mrBoxSel.endY);
+    const bw = Math.abs(mrBoxSel.endX - mrBoxSel.startX);
+    const bh = Math.abs(mrBoxSel.endY - mrBoxSel.startY);
+    ctx.strokeStyle = 'rgba(167,139,250,0.9)';
+    ctx.fillStyle   = 'rgba(167,139,250,0.08)';
+    ctx.lineWidth   = 1.5;
+    ctx.setLineDash([4, 3]);
+    ctx.beginPath(); ctx.roundRect(bx, by, bw, bh, 2);
+    ctx.fill(); ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
   // Playhead
   if (mrPlayhead >= 0) {
     const x = mrPlayhead * MR_BEAT_W;
     ctx.strokeStyle = '#ff4757';
     ctx.lineWidth   = 2;
     ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke();
+    // Draggable handle triangle at top
+    ctx.fillStyle = '#ff4757';
+    ctx.beginPath();
+    ctx.moveTo(x - 7, 0);
+    ctx.lineTo(x + 7, 0);
+    ctx.lineTo(x, 10);
+    ctx.closePath();
+    ctx.fill();
   }
 
   // Update pitch label sidebar
   const sidebar = document.getElementById('mrPitchLabels');
   if (!sidebar) return;
   sidebar.innerHTML = '';
+  const fontSize = Math.max(7, Math.min(13, MR_ROW_H * 0.45));
+  sidebar.style.height = H + 'px';
   rows.forEach(midi => {
     const lbl = document.createElement('div');
     lbl.className = 'nb-pitch-label';
-    lbl.style.height = MR_ROW_H + 'px';
+    lbl.style.height   = MR_ROW_H + 'px';
+    lbl.style.fontSize = fontSize + 'px';
+    lbl.style.flexShrink = '0';
     lbl.textContent = pcToName(midi % 12) + (Math.floor(midi / 12) - 1);
     sidebar.appendChild(lbl);
   });
@@ -440,44 +481,162 @@ async function mrAddTake() {
   // Flow continues in stopBtn handler in app.js which checks mrAddingTake
 }
 
+// ── Playhead hit test (within 10px of the line) ──
+function mrHitPlayhead(x) {
+  if (mrPlayhead < 0) return false;
+  return Math.abs(x - mrPlayhead * MR_BEAT_W) <= 10;
+}
+
+// ── Copy / paste ──
+function mrCopySelected() {
+  if (mrSelected.size === 0) return;
+  mrClipboard = [...mrSelected].map(i => ({ ...mrSequence[i] }));
+}
+
+function mrPasteClipboard() {
+  if (mrClipboard.length === 0) return;
+  const minBeat = Math.min(...mrClipboard.map(n => n.beat));
+  // Paste after the last note in the sequence
+  const pasteOffset = mrSequence.length > 0
+    ? Math.max(...mrSequence.map(n => n.beat + n.dur))
+    : 0;
+  const newNotes = mrClipboard.map(n => ({
+    ...n,
+    beat: mrSnapBeat(n.beat - minBeat + pasteOffset),
+  }));
+  const insertIdx = mrSequence.length;
+  mrSequence.push(...newNotes);
+  mrSelected = new Set(newNotes.map((_, i) => insertIdx + i));
+  mrUpdateUI();
+  mrDrawRoll();
+}
+
 // ── Mouse/touch interaction on the review roll ──
 function mrOnMouseDown(e) {
   const { x, y } = mrCanvasXY(e);
+
+  // 1 — playhead scrub
+  if (mrHitPlayhead(x)) {
+    mrScrubbing = true;
+    mrCanvas.style.cursor = 'col-resize';
+    return;
+  }
+
+  // 2 — note hit
   const hit = mrHitNote(x, y);
-  if (!hit) return;
-  const n = mrSequence[hit.idx];
-  mrDragging = { noteIdx: hit.idx, mode: hit.mode, startX: x,
-    origBeat: n.beat, origDur: n.dur ?? 0.5 };
-  mrCanvas.style.cursor = hit.mode === 'resize' ? 'ew-resize' : 'grabbing';
+  if (hit) {
+    // If clicking a selected note, move the whole selection
+    if (mrSelected.has(hit.idx) && hit.mode === 'move' && mrSelected.size > 1) {
+      mrDragging = { noteIdx: hit.idx, mode: 'moveSelection', startX: x, startY: y,
+        origBeats: [...mrSelected].map(i => ({ i, beat: mrSequence[i].beat })),
+        origMidis: [...mrSelected].map(i => ({ i, midi: mrSequence[i].midi })) };
+    } else {
+      if (!e.shiftKey) mrSelected.clear();
+      mrSelected.add(hit.idx);
+      const n = mrSequence[hit.idx];
+      mrDragging = { noteIdx: hit.idx, mode: hit.mode, startX: x, startY: y,
+        origBeat: n.beat, origDur: n.dur ?? 0.5, origMidi: n.midi };
+    }
+    mrCanvas.style.cursor = hit.mode === 'resize' ? 'ew-resize' : 'grabbing';
+    mrDrawRoll();
+    return;
+  }
+
+  // 3 — empty space: start box selection
+  if (!e.shiftKey) mrSelected.clear();
+  mrBoxSel = { startX: x, startY: y, endX: x, endY: y };
   mrDrawRoll();
 }
 
 function mrOnMouseMove(e) {
-  if (!mrDragging) {
-    const { x, y } = mrCanvasXY(e);
-    const hit = mrHitNote(x, y);
-    mrCanvas.style.cursor = !hit ? 'default' : (hit.mode === 'resize' ? 'ew-resize' : 'grab');
+  const { x, y } = mrCanvasXY(e);
+
+  if (mrScrubbing) {
+    mrPlayhead = Math.max(0, Math.min(mrTotalBeats(), x / MR_BEAT_W));
+    mrDrawRoll();
     return;
   }
-  const { x } = mrCanvasXY(e);
-  const dx = x - mrDragging.startX;
-  const n  = mrSequence[mrDragging.noteIdx];
-  if (mrDragging.mode === 'move') {
-    n.beat = Math.max(0, Math.min(mrTotalBeats() - (n.dur ?? 0.25),
-      mrSnapBeat(mrDragging.origBeat + dx / MR_BEAT_W)));
-  } else {
-    n.dur = Math.max(0.25, mrSnapBeat(mrDragging.origDur + dx / MR_BEAT_W));
+
+  if (mrBoxSel) {
+    mrBoxSel.endX = x;
+    mrBoxSel.endY = y;
+    // Update selection set
+    const bx1 = Math.min(mrBoxSel.startX, x);
+    const bx2 = Math.max(mrBoxSel.startX, x);
+    const by1 = Math.min(mrBoxSel.startY, y);
+    const by2 = Math.max(mrBoxSel.startY, y);
+    const rows = mrGetRows();
+    mrSequence.forEach((note, i) => {
+      const nx = note.beat * MR_BEAT_W + 2;
+      const nw = Math.max(MR_BEAT_W * 0.3, note.dur * MR_BEAT_W - 4);
+      const r  = rows.indexOf(note.midi);
+      const ny = r * MR_ROW_H + 3;
+      const nh = MR_ROW_H - 6;
+      const overlaps = nx < bx2 && nx + nw > bx1 && ny < by2 && ny + nh > by1;
+      if (overlaps) mrSelected.add(i); else if (!e.shiftKey) mrSelected.delete(i);
+    });
+    mrDrawRoll();
+    return;
   }
-  mrDrawRoll();
+
+  if (mrDragging) {
+    const dx = x - mrDragging.startX;
+    const dy = y - mrDragging.startY;
+    if (mrDragging.mode === 'moveSelection') {
+      const beatDelta  = mrSnapBeat(dx / MR_BEAT_W);
+      const pitchDelta = -Math.round(dy / MR_ROW_H); // up = higher midi
+      mrDragging.origBeats.forEach(({ i, beat }) => {
+        mrSequence[i].beat = Math.max(0, Math.min(mrTotalBeats() - (mrSequence[i].dur ?? 0.25), beat + beatDelta));
+      });
+      mrDragging.origMidis.forEach(({ i, midi }) => {
+        const newMidi = Math.max(21, Math.min(108, midi + pitchDelta));
+        mrSequence[i].midi = newMidi;
+        mrSequence[i].pc   = newMidi % 12;
+        mrSequence[i].freq = 440 * Math.pow(2, (newMidi - 69) / 12);
+      });
+    } else if (mrDragging.mode === 'move') {
+      const n = mrSequence[mrDragging.noteIdx];
+      n.beat = Math.max(0, Math.min(mrTotalBeats() - (n.dur ?? 0.25),
+        mrSnapBeat(mrDragging.origBeat + dx / MR_BEAT_W)));
+      // Vertical: snap to semitone rows
+      const pitchDelta = -Math.round(dy / MR_ROW_H);
+      const newMidi = Math.max(21, Math.min(108, mrDragging.origMidi + pitchDelta));
+      n.midi = newMidi;
+      n.pc   = newMidi % 12;
+      n.freq = 440 * Math.pow(2, (newMidi - 69) / 12);
+    } else {
+      const n = mrSequence[mrDragging.noteIdx];
+      n.dur = Math.max(0.25, mrSnapBeat(mrDragging.origDur + dx / MR_BEAT_W));
+    }
+    mrDrawRoll();
+    return;
+  }
+
+  // Cursor hints
+  if (mrHitPlayhead(x)) { mrCanvas.style.cursor = 'col-resize'; return; }
+  const hit = mrHitNote(x, y);
+  mrCanvas.style.cursor = !hit ? 'crosshair' : (hit.mode === 'resize' ? 'ew-resize' : 'grab');
 }
 
 function mrOnMouseUp(e) {
-  if (!mrDragging) return;
-  const { x } = mrCanvasXY(e);
-  if (Math.abs(x - mrDragging.startX) < 5 && mrDragging.mode === 'move') {
-    mrSequence.splice(mrDragging.noteIdx, 1);
-    mrUpdateUI();
+  if (mrScrubbing) {
+    mrScrubbing = false;
+    mrCanvas.style.cursor = 'default';
+    // If playback is running, restart from the scrubbed position
+    const beat = mrPlayhead;
+    if (beat >= 0) mrSeekPlayback(beat);
+    return;
   }
+
+  if (mrBoxSel) {
+    mrBoxSel = null;
+    mrDrawRoll();
+    return;
+  }
+
+  if (!mrDragging) return;
+
+  // No delete on click — click selects, Backspace/Delete removes
   mrDragging = null;
   mrCanvas.style.cursor = 'default';
   mrDrawRoll();

@@ -955,7 +955,7 @@ main { flex: 1; max-width: 860px; margin: 0 auto; width: 100%; padding: 0 24px 6
   border: 1px solid var(--border);
   border-radius: 6px;
   overflow: hidden;
-  margin-bottom: 10px;
+  margin-bottom: 0;
 }
 
 .nb-roll-pitch-labels {
@@ -1005,11 +1005,23 @@ main { flex: 1; max-width: 860px; margin: 0 auto; width: 100%; padding: 0 24px 6
   margin-bottom: 20px;
 }
 
+.nb-keyboard-scroll {
+  overflow-x: auto;
+  overflow-y: hidden;
+  margin-bottom: 16px;
+  padding-bottom: 4px;
+  /* subtle scrollbar */
+  scrollbar-width: thin;
+  scrollbar-color: var(--border2) transparent;
+}
+.nb-keyboard-scroll::-webkit-scrollbar { height: 4px; }
+.nb-keyboard-scroll::-webkit-scrollbar-track { background: transparent; }
+.nb-keyboard-scroll::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 2px; }
+
 .nb-keyboard {
   position: relative;
   display: flex;
   height: 120px;
-  margin-bottom: 16px;
   user-select: none;
 }
 
@@ -1019,16 +1031,31 @@ main { flex: 1; max-width: 860px; margin: 0 auto; width: 100%; padding: 0 24px 6
   cursor: pointer;
   transition: background 0.07s, transform 0.07s;
   display: flex;
-  align-items: flex-end;
-  justify-content: center;
-  padding-bottom: 6px;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  padding-bottom: 5px;
+  gap: 2px;
   font-family: 'Space Mono', monospace;
-  font-size: 9px;
   letter-spacing: 0;
+  user-select: none;
+}
+
+.nb-key .key-note {
+  font-size: 8px;
+  line-height: 1;
+}
+.nb-key .key-kb {
+  font-size: 7px;
+  opacity: 0.55;
+  line-height: 1;
+  background: rgba(0,0,0,0.12);
+  border-radius: 2px;
+  padding: 1px 3px;
 }
 
 .nb-key.white {
-  width: 44px;
+  width: 36px;
   height: 120px;
   background: #dde2ec;
   border: 1px solid #aab;
@@ -1038,21 +1065,29 @@ main { flex: 1; max-width: 860px; margin: 0 auto; width: 100%; padding: 0 24px 6
   flex-shrink: 0;
 }
 
+/* Bold label on C keys to mark octave boundaries */
+.nb-key.white.octave-c {
+  color: #334;
+  font-weight: 700;
+  border-left: 2px solid #99a;
+}
+
 .nb-key.white:hover  { background: #c8f0ff; }
 .nb-key.white:active { background: var(--cyan); color: var(--bg0); transform: scaleY(0.97); }
 .nb-key.white.lit    { background: var(--cyan); color: var(--bg0); }
+.nb-key.white.lit .key-kb { background: rgba(0,0,0,0.2); }
 
 .nb-key.black {
-  width: 28px;
+  width: 22px;
   height: 72px;
   background: #1a2236;
   border: 1px solid #333;
-  color: #556;
-  font-size: 8px;
+  color: #99b;
   z-index: 2;
   position: absolute;
   top: 0;
 }
+.nb-key.black .key-kb { background: rgba(255,255,255,0.08); color: #aac; }
 
 .nb-key.black:hover  { background: #1e3a4a; border-color: var(--cyan); }
 .nb-key.black:active { background: var(--cyan); color: var(--bg0); }
@@ -1357,7 +1392,7 @@ main { flex: 1; max-width: 860px; margin: 0 auto; width: 100%; padding: 0 24px 6
   border: 1px solid var(--border);
   border-radius: 6px;
   overflow: hidden;
-  margin-bottom: 10px;
+  margin-bottom: 0;
 }
 
 .mr-roll-pitch-labels {
@@ -1406,6 +1441,106 @@ main { flex: 1; max-width: 860px; margin: 0 auto; width: 100%; padding: 0 24px 6
   font-family: 'Space Mono', monospace;
   pointer-events: none;
 }
+
+/* ── Roll resize handle ── */
+.roll-resize-handle {
+  width: 100%;
+  height: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: nwse-resize;
+  color: var(--text3);
+  font-size: 14px;
+  letter-spacing: 2px;
+  user-select: none;
+  margin: 2px 0 6px;
+  opacity: 0.4;
+  transition: opacity 0.15s;
+}
+.roll-resize-handle:hover { opacity: 1; color: var(--accent); }
+
+/* ── Save melody modal ── */
+.save-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.65);
+  backdrop-filter: blur(4px);
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.save-modal {
+  background: var(--bg1);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 28px 32px;
+  width: min(420px, 92vw);
+  box-shadow: 0 24px 64px rgba(0,0,0,0.5);
+}
+.save-modal-title {
+  font-family: 'Space Mono', monospace;
+  font-size: 16px;
+  color: var(--text1);
+  margin: 0 0 20px;
+  letter-spacing: 0.04em;
+}
+.save-modal-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 24px;
+}
+.save-modal-label {
+  font-family: 'Space Mono', monospace;
+  font-size: 11px;
+  color: var(--text3);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.save-modal-input {
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text1);
+  font-family: 'Space Mono', monospace;
+  font-size: 14px;
+  padding: 10px 14px;
+  outline: none;
+  transition: border-color 0.15s;
+}
+.save-modal-input:focus { border-color: var(--accent); }
+.save-modal-btns {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+}
+.save-modal-cancel {
+  background: none;
+  border: 1px solid var(--border2);
+  border-radius: 6px;
+  color: var(--text3);
+  font-family: 'Space Mono', monospace;
+  font-size: 12px;
+  padding: 8px 18px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.save-modal-cancel:hover { color: var(--text1); border-color: var(--text3); }
+.save-modal-confirm {
+  background: var(--accent);
+  border: none;
+  border-radius: 6px;
+  color: #000;
+  font-family: 'Space Mono', monospace;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 8px 20px;
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+.save-modal-confirm:hover { opacity: 0.85; }
 
 /* Responsive */
 @media (max-width: 600px) {

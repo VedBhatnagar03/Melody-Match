@@ -184,7 +184,7 @@ IOI median BPM detection is fragile for melodies with many rests or irregular ph
 
 ### Editing improvements (mic-review roll)
 
-**#37 — Overlay raw audio waveform behind piano roll notes**  ⭐ Highest impact
+**#37 ✅ — Overlay raw audio waveform behind piano roll notes**  ⭐ Highest impact
 Decode `rawAudioBlob` into a waveform and render it as a semi-transparent grey background behind the note blocks on `mrRollCanvas`. Users can see exactly where they sang what and manually align notes to the visible attack transients. Would make fixing timing errors dramatically easier.  
 **File:** `js/mic-review.js` `mrDrawRoll()` — decode waveform once on load, cache as `Float32Array`, draw scaled to canvas.
 
@@ -280,13 +280,8 @@ Users often discover a chord progression they love but continue browsing other s
 
 ---
 
-**#52 — Explain what "play raw mic" means** 🟢 Medium impact  
-The button label `🎤 play raw mic` is confusing — users don't know if it's playing their voice, the detected melody, or something else. It plays back the original unprocessed microphone recording (the `rawAudioBlob` from `MediaRecorder`) — i.e. what you actually sang, before any pitch detection.  
-**Fix:**  
-1. Rename button to `🎤 hear your recording` or `🎤 original recording`  
-2. Add a short tooltip/label nearby: *"Plays back your original sung audio — useful for comparing with the detected notes above"*  
-3. Consider adding a raw-audio volume slider (currently the raw audio plays at full browser volume with no control).  
-**File:** `index.html`, `css/styles.css`.
+**#52 ✅ — Explain what "play raw mic" means** 🟢 Medium impact  
+Renamed button to `🎤 raw audio` with a tooltip. Added a second button `🎤+♪ notes over raw` that plays the original recording and detected notes simultaneously — the primary use case for comparing detected notes against what was actually sung. Raw audio now also drives the roll playhead so the scrubber tracks position during playback. Implemented in `js/app.js`.
 
 ---
 
@@ -294,6 +289,18 @@ The button label `🎤 play raw mic` is confusing — users don't know if it's p
 Results page shows BPM as display-only text in the card metadata. If the detected BPM is wrong (common with irregular phrasing), there is no way to correct it from results — you have to go back to mic-review, fix BPM, and re-analyse. Fixing BPM on results should immediately re-render the chord bars at the correct spacing.  
 **Fix:** Replace the static BPM label in each result card header with a small `−/BPM/+` control (same style as the mic-review BPM row). Changing it calls `buildResults()` with the overridden BPM, or better, just calls `buildBarChords()` again with the new value and re-renders that card's chord chips.  
 **File:** `js/results.js`, `js/app.js`.
+
+---
+
+**#55 ✅ — Save recorded melodies from mic-review** 🟡 High impact  
+Previously only the notebuilder and results page had a save button. Recorded melodies could only be saved after going through results. Added a `✦ save` button directly on the mic-review screen.  
+- Saves `mrSequence`, `mrBpm`, `mrBars` to localStorage  
+- Also saves `rawAudioBlob` as base64 (if under 3MB) so raw audio is restored on load  
+- Loading a saved recording reopens it in mic-review (not results) with all notes, waveform overlay, and raw audio intact  
+- Saved list shows `🎤 recorded` (amber) vs `🎹 built` (cyan) badge on every entry  
+- Shows "no audio" hint if recording was too large to store  
+- localStorage quota guard: retries without audio blob if quota exceeded  
+**File:** `js/app.js`, `js/mic-review.js`, `index.html`, `css/styles.css`.
 
 ---
 
@@ -318,8 +325,12 @@ The detected BPM is purely statistical (IOI median). Some scales have a strong c
 - **#17**: `#bestMatchName` accessed with optional chaining `?.textContent?.trim()` + fallback
 - **#18**: Edit Melody `detectedPitches` fallback path now uses `_lastResults.bars.length` for bar count
 - **#20**: Undo/redo (Ctrl+Z/Y, ↩/↪ buttons) — 10-level stack on both notebuilder and mic-review rolls
+- **#22**: Chord chips highlight in sync with playback via `Tone.Draw.schedule` per bar; clears on stop
+- **#37**: Waveform overlay — `rawAudioBlob` downsampled to 800 RMS buckets, drawn as faint cyan silhouette behind note blocks in mic-review; cleared on back/reset
 - **#45**: Accidental delete — already using select+Backspace pattern; no click-to-delete
 - **#47**: Piano roll zoom — resize handle (`makeRollResizable`) already implemented for both rolls
+- **#52**: Raw audio button renamed `🎤 raw audio`; playhead now tracks raw audio `currentTime` via rAF; new `🎤+♪ notes over raw` button plays both in sync (sampler and raw audio loaded together before starting either to eliminate delay)
+- **#55**: Save from mic-review — `✦ save` button on mic-review toolbar; saves notes + raw audio blob (base64, ≤3MB); restores to mic-review on load with waveform; `🎤 recorded` / `🎹 built` badges on saved list
 - **Playhead scrub on notebuilder**: Red triangle handle on playhead, draggable while playing or paused; stays visible at beat 0 whenever notes exist
 
 ---
@@ -330,9 +341,11 @@ The detected BPM is purely statistical (IOI median). Some scales have a strong c
 
 | # | Title | Impact | Reason |
 |---|-------|--------|--------|
-| **#22** | Chord cards highlight during playback | 🔴 | Every play feels dead without this. Core feedback loop |
-| **#37** | Waveform overlay on mic-review roll | 🔴 | ⭐ Single biggest improvement to recording workflow — see attack transients |
-| **#49** | Note correction toolkit (context menu + snap-to-scale + waveform + grid selector) | 🔴 | Combines #37/38/40/42 — fixes the hardest part of the whole app |
+| ~~**#22**~~ | ~~Chord cards highlight during playback~~ | ✅ | Done |
+| ~~**#37**~~ | ~~Waveform overlay on mic-review roll~~ | ✅ | Done |
+| ~~**#52**~~ | ~~Raw audio button + notes-over-raw~~ | ✅ | Done |
+| ~~**#55**~~ | ~~Save recorded melodies from mic-review~~ | ✅ | Done |
+| **#49** | Note correction toolkit (context menu + snap-to-scale + grid selector) | 🔴 | #37 done; #38/40/42 still pending — fixes the hardest part of the whole app |
 | **#46** | MIDI export | 🔴 | Takes the result into any DAW — huge practical value, no workaround |
 | **#36** | Tap tempo | 🔴 | Wrong BPM = every note position wrong. Tap tempo unblocks the most common failure |
 | **#50** | Improve chord editor (change root/quality) | 🟡 | Currently chords are read-only after selection — can't tweak them at all |
@@ -354,7 +367,6 @@ The detected BPM is purely statistical (IOI median). Some scales have a strong c
 | **#39** | Low-confidence filter toggle | 🟢 | `conf` already exists, toggle is low effort |
 | **#40** | Right-click context menu on notes | 🟢 | Precision editing without needing accurate drag |
 | **#23** | Playback preview on saved list | 🟢 | QoL — hear before loading |
-| **#52** | Explain "play raw mic" button | 🟢 | Rename + tooltip. Very quick |
 | **#25** | Scoring "why?" tooltip | 🟢 | Educational; not urgent |
 | **#44** | Ghost scale-reference notes during playback | 🟢 | Interesting but potentially confusing |
 | **#43** | Suggest corrections summary panel | 🟢 | Stats without action — marginal |

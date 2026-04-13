@@ -1283,6 +1283,27 @@ main { flex: 1; max-width: 860px; margin: 0 auto; width: 100%; padding: 0 24px 6
   color: var(--text3);
   margin-top: 2px;
 }
+.saved-source-badge {
+  display: inline-block;
+  font-family: 'Space Mono', monospace;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 3px;
+  vertical-align: middle;
+  margin-left: 6px;
+  letter-spacing: 0.04em;
+}
+.saved-source-mic {
+  background: rgba(255,140,66,0.15);
+  color: #ff8c42;
+  border: 1px solid rgba(255,140,66,0.3);
+}
+.saved-source-builder {
+  background: rgba(0,212,255,0.1);
+  color: var(--cyan);
+  border: 1px solid rgba(0,212,255,0.25);
+}
 .saved-item-btns { display: flex; gap: 6px; flex-shrink: 0; }
 .saved-load-btn, .saved-delete-btn {
   padding: 6px 12px;

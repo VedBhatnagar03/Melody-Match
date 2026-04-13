@@ -369,6 +369,8 @@ function mrUpdateUI() {
   if (el) el.textContent = mrSequence.length + (mrSequence.length === 1 ? ' note' : ' notes');
   const analyseBtn = document.getElementById('mrAnalyseBtn');
   if (analyseBtn) analyseBtn.disabled = mrSequence.length < 4;
+  const saveBtn = document.getElementById('mrSaveMelodyBtn');
+  if (saveBtn) saveBtn.disabled = mrSequence.length === 0;
   const playBtn = document.getElementById('mrPlayBtn');
   if (playBtn) playBtn.disabled = mrSequence.length === 0;
   document.getElementById('mrBpmLabel').textContent = mrBpm;

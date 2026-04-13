@@ -118,6 +118,7 @@ document.getElementById('mrBackBtn').addEventListener('click', () => {
   mrAddingTake = false;
   detectedPitches = [];
   mrWaveformData = null;
+  if (mrRawAudioElement) { cancelAnimationFrame(mrRawAnimId); mrRawAnimId = null; mrRawAudioElement.pause(); mrRawAudioElement = null; }
   showScreen('idle');
 });
 
@@ -166,30 +167,141 @@ document.getElementById('mrAutoTuneBtn').addEventListener('click', () => {
 });
 
 let mrRawAudioElement = null;
-document.getElementById('mrPlayRawBtn').addEventListener('click', () => {
-  if (typeof rawAudioBlob === 'undefined' || !rawAudioBlob) return;
-  const btn = document.getElementById('mrPlayRawBtn');
-  
+let mrRawAnimId = null;
+
+// Play raw audio and drive the roll playhead from its currentTime.
+// startBeat: if provided, seeks raw audio to the equivalent time offset.
+function mrStopRaw() {
   if (mrRawAudioElement) {
+    cancelAnimationFrame(mrRawAnimId); mrRawAnimId = null;
     mrRawAudioElement.pause();
     mrRawAudioElement = null;
-    btn.textContent = '🎤 play raw mic';
+  }
+}
+
+// Build a ready-to-play Audio element from rawAudioBlob.
+// Returns a Promise that resolves once metadata is loaded.
+function mrCreateRawAudio() {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(rawAudioBlob);
+    const el = new Audio(url);
+    if (el.readyState >= 1) { resolve(el); return; }
+    el.addEventListener('loadedmetadata', () => resolve(el), { once: true });
+    el.addEventListener('error', reject, { once: true });
+  });
+}
+
+// Start the raw-audio rAF loop that drives mrPlayhead from el.currentTime.
+function mrStartRawAnim(el) {
+  const totalBeats = mrTotalBeats();
+  const totalSec   = totalBeats * (60 / mrBpm);
+  function animRaw() {
+    if (mrRawAudioElement !== el) return; // superseded
+    const dur = el.duration || totalSec;
+    mrPlayhead = (el.currentTime / dur) * totalBeats;
+    mrDrawRoll();
+    mrRawAnimId = requestAnimationFrame(animRaw);
+  }
+  mrRawAnimId = requestAnimationFrame(animRaw);
+}
+
+document.getElementById('mrPlayRawBtn').addEventListener('click', async () => {
+  const btn = document.getElementById('mrPlayRawBtn');
+
+  // Toggle off
+  if (mrRawAudioElement) {
+    mrStopRaw();
+    mrPlayhead = -1;
+    mrDrawRoll();
+    btn.textContent = '🎤 raw audio';
     return;
   }
-  
-  const url = URL.createObjectURL(rawAudioBlob);
-  mrRawAudioElement = new Audio(url);
-  mrRawAudioElement.play();
+
+  if (typeof rawAudioBlob === 'undefined' || !rawAudioBlob) return;
+
+  const el = await mrCreateRawAudio();
+  mrRawAudioElement = el;
+
+  el.onended = () => {
+    mrStopRaw();
+    mrPlayhead = -1;
+    mrDrawRoll();
+    btn.textContent = '🎤 raw audio';
+  };
+  el.onerror = () => {
+    mrStopRaw();
+    btn.textContent = '🎤 raw audio';
+  };
+
+  el.play().catch(() => {});
   btn.textContent = '❚❚ stop raw';
-  
-  mrRawAudioElement.onended = () => {
-    mrRawAudioElement = null;
-    btn.textContent = '🎤 play raw mic';
+  mrStartRawAnim(el);
+});
+
+// "Play notes over raw" — load everything first, then start both in the same tick
+document.getElementById('mrPlayWithRawBtn').addEventListener('click', async () => {
+  if (typeof rawAudioBlob === 'undefined' || !rawAudioBlob) return;
+  const btn = document.getElementById('mrPlayWithRawBtn');
+
+  // Toggle off
+  if (mrRawAudioElement) {
+    mrStopRaw();
+    stopPlayback();
+    mrPlayhead = -1;
+    mrDrawRoll();
+    btn.textContent = '🎤+♪ notes over raw';
+    return;
+  }
+
+  const startBeat = mrPlayhead >= 0 ? mrPlayhead : 0;
+  btn.textContent = '⟳ loading...';
+
+  // Load BOTH the raw audio metadata AND the melody sampler before starting either
+  let rawEl;
+  try {
+    [rawEl] = await Promise.all([
+      mrCreateRawAudio(),
+      Tone.start(),
+      loadMelodySampler(melodyInstrument),
+    ]);
+  } catch(e) {
+    btn.textContent = '🎤+♪ notes over raw';
+    return;
+  }
+
+  // Seek raw audio to matching position
+  const totalBeats = mrTotalBeats();
+  const totalSec   = totalBeats * (60 / mrBpm);
+  if (startBeat > 0) {
+    const rawDur = rawEl.duration || totalSec;
+    rawEl.currentTime = (startBeat / totalBeats) * rawDur;
+  }
+
+  // Stop any previous note playback (stopPlayback increments playGeneration)
+  stopPlayback();
+
+  // Register raw element AFTER stopPlayback so mrStopRaw inside stop handler doesn't kill it
+  mrRawAudioElement = rawEl;
+  rawEl.onended = () => {
+    mrStopRaw();
+    mrPlayhead = -1;
+    mrDrawRoll();
+    btn.textContent = '🎤+♪ notes over raw';
   };
-  mrRawAudioElement.onerror = () => {
-    mrRawAudioElement = null;
-    btn.textContent = '🎤 play raw mic';
+  rawEl.onerror = () => {
+    mrStopRaw();
+    btn.textContent = '🎤+♪ notes over raw';
   };
+
+  // Start raw audio
+  rawEl.play().catch(() => {});
+  btn.textContent = '❚❚ stop';
+
+  // Start note playback — mrStartPlaybackFrom drives its own animPlayhead loop.
+  // We skip it here and instead drive the playhead purely from raw audio currentTime
+  // so the scrubber stays locked to the audio.
+  mrStartRawAnim(rawEl);
+  mrStartPlaybackFrom(startBeat);
 });
 
 async function mrStartPlaybackFrom(startBeat) {
@@ -253,12 +365,19 @@ async function mrStartPlaybackFrom(startBeat) {
 
   const startTime = performance.now();
   function animPlayhead() {
-    if (playGeneration !== gen) { mrPlayhead = -1; mrDrawRoll(); return; }
-    const elapsed = (performance.now() - startTime) / 1000;
-    mrPlayhead = startBeat + elapsed / secPerBeat;
-    mrDrawRoll();
-    if (elapsed < totalLen - startSec) requestAnimationFrame(animPlayhead);
-    else { mrPlayhead = -1; mrDrawRoll(); }
+    if (playGeneration !== gen) { if (!mrRawAudioElement) { mrPlayhead = -1; mrDrawRoll(); } return; }
+    // If raw audio is also playing, let mrStartRawAnim own the playhead
+    if (!mrRawAudioElement) {
+      const elapsed = (performance.now() - startTime) / 1000;
+      mrPlayhead = startBeat + elapsed / secPerBeat;
+      mrDrawRoll();
+      if (elapsed < totalLen - startSec) requestAnimationFrame(animPlayhead);
+      else { mrPlayhead = -1; mrDrawRoll(); }
+    } else {
+      // Raw audio owns playhead — just keep looping until notes are done
+      const elapsed = (performance.now() - startTime) / 1000;
+      if (elapsed < totalLen - startSec) requestAnimationFrame(animPlayhead);
+    }
   }
   requestAnimationFrame(animPlayhead);
 
@@ -267,7 +386,12 @@ async function mrStartPlaybackFrom(startBeat) {
 
 // Called when user drags the playhead and releases
 function mrSeekPlayback(beat) {
-  // Only restart if currently playing
+  // If raw audio is playing, seek it
+  if (mrRawAudioElement) {
+    const rawDur = mrRawAudioElement.duration || (mrTotalBeats() * 60 / mrBpm);
+    mrRawAudioElement.currentTime = (beat / mrTotalBeats()) * rawDur;
+  }
+  // If note playback is running, restart from new position
   if (playGeneration > 0 && mrPlayhead >= 0) mrStartPlaybackFrom(beat);
 }
 
@@ -464,18 +588,25 @@ function savedRender() {
 
   if (list.length === 0) { el.innerHTML = ''; return; }
 
-  el.innerHTML = list.map((m, i) => `
+  el.innerHTML = list.map((m, i) => {
+    const isMic     = m.source === 'mic';
+    const badge     = isMic
+      ? `<span class="saved-source-badge saved-source-mic">🎤 recorded</span>`
+      : `<span class="saved-source-badge saved-source-builder">🎹 built</span>`;
+    const audioHint = (isMic && !m.rawAudioB64) ? ` · <span title="Original audio not saved (too large)">no audio</span>` : '';
+    return `
     <div class="saved-item" data-idx="${i}">
       <div class="saved-item-info">
-        <div class="saved-item-name">${m.name}</div>
-        <div class="saved-item-meta">${m.noteCount} notes · ${m.bpm} bpm · ${m.bars} bars · ${m.source} · ${m.date}</div>
+        <div class="saved-item-name">${m.name} ${badge}</div>
+        <div class="saved-item-meta">${m.noteCount} notes · ${m.bpm} bpm · ${m.bars} bars · ${m.date}${audioHint}</div>
       </div>
       <div class="saved-item-btns">
         <button class="saved-load-btn" data-idx="${i}">load</button>
         <button class="saved-delete-btn" data-idx="${i}">✕</button>
       </div>
     </div>
-  `).join('');
+  `;
+  }).join('');
 
   el.querySelectorAll('.saved-load-btn').forEach(btn => {
     btn.addEventListener('click', () => savedLoadMelody(parseInt(btn.dataset.idx)));
@@ -510,6 +641,51 @@ function savedLoadMelody(idx) {
     nbUpdateUI();
     nbDrawRoll();
     showScreen('notebuilder');
+  } else if (m.source === 'mic' && m.sequence) {
+    // Recorded melody saved from mic-review — restore to mic-review screen
+    mrSequence   = m.sequence.map(n => ({ ...n }));
+    mrBpm        = m.bpm  || 100;
+    mrBars       = m.bars || 4;
+    mrTakes      = [{ notes: mrSequence.map(n => ({ ...n })), bpm: mrBpm, label: 'Saved Take' }];
+    mrActiveTake = 0;
+    mrUndoStack  = []; mrRedoStack = [];
+
+    // Restore raw audio blob if saved
+    rawAudioBlob = null;
+    mrWaveformData = null;
+    if (m.rawAudioB64 && m.rawAudioType) {
+      try {
+        const binary = atob(m.rawAudioB64);
+        const bytes  = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+        rawAudioBlob = new Blob([bytes], { type: m.rawAudioType });
+        // Re-extract waveform from restored blob
+        rawAudioBlob.arrayBuffer().then(ab => {
+          const ctx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 44100 });
+          ctx.decodeAudioData(ab).then(audioBuf => {
+            ctx.close();
+            const mono = audioBuf.numberOfChannels > 1
+              ? (() => { const L = audioBuf.getChannelData(0), R = audioBuf.getChannelData(1), m2 = new Float32Array(L.length); for (let i=0;i<L.length;i++) m2[i]=(L[i]+R[i])*0.5; return m2; })()
+              : audioBuf.getChannelData(0);
+            const NUM = 800, bsz = Math.floor(mono.length / NUM);
+            const buckets = new Float32Array(NUM);
+            for (let b=0;b<NUM;b++) { let s=0; for (let j=0;j<bsz;j++) s+=mono[b*bsz+j]**2; buckets[b]=Math.sqrt(s/bsz); }
+            const peak = Math.max(...buckets, 0.0001);
+            mrWaveformData = buckets.map(v => v/peak);
+            mrDrawRoll();
+          }).catch(() => ctx.close());
+        }).catch(() => {});
+      } catch(e) { rawAudioBlob = null; }
+    }
+
+    pitchSource  = 'mic';
+    detectedPitches = mrSequence.map(n => ({ ...n, time: n.beat * (60 / mrBpm) * 1000 }));
+    mrUpdateUI();
+    mrRenderTakes();
+    mrDrawRoll();
+    const sub = document.getElementById('mrSub');
+    if (sub) sub.textContent = `${mrSequence.length} notes · ${mrBpm} BPM · loaded from saved`;
+    showScreen('mic-review');
   } else if (m.pitches) {
     detectedPitches = m.pitches.map(p => ({ ...p }));
     pitchSource = m.source || 'mic';
@@ -637,6 +813,75 @@ function savedSaveFromBuilder() {
     savedShowModal('My Melody', doSave);
   }
 }
+
+async function savedSaveFromMicReview() {
+  if (mrSequence.length === 0) return;
+  const list = savedLoad();
+  const isOverwrite = currentSavedIdx >= 0 && currentSavedIdx < list.length;
+
+  const doSave = async (name) => {
+    // Try to encode rawAudioBlob as base64 — skip if too large (>3MB blob → ~4MB base64)
+    let rawAudioB64 = null;
+    let rawAudioType = null;
+    if (typeof rawAudioBlob !== 'undefined' && rawAudioBlob && rawAudioBlob.size < 3 * 1024 * 1024) {
+      try {
+        const ab = await rawAudioBlob.arrayBuffer();
+        const bytes = new Uint8Array(ab);
+        let binary = '';
+        for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i]);
+        rawAudioB64 = btoa(binary);
+        rawAudioType = rawAudioBlob.type || 'audio/webm';
+      } catch(e) { rawAudioB64 = null; }
+    }
+
+    const entry = {
+      version: STORAGE_VERSION,
+      name,
+      date: new Date().toLocaleDateString(),
+      noteCount: mrSequence.length,
+      bpm: mrBpm,
+      bars: mrBars,
+      source: 'mic',
+      pitches: [...mrSequence].sort((a, b) => a.beat - b.beat).map(n => ({
+        ...n,
+        time: n.beat * (60 / mrBpm) * 1000,
+      })),
+      sequence: mrSequence.map(n => ({ ...n })),
+      rawAudioB64,
+      rawAudioType,
+    };
+
+    const freshList = savedLoad();
+    try {
+      if (isOverwrite) {
+        freshList[currentSavedIdx] = entry;
+      } else {
+        freshList.unshift(entry);
+        currentSavedIdx = 0;
+      }
+      savedWrite(freshList);
+    } catch(e) {
+      // localStorage quota exceeded — retry without audio
+      entry.rawAudioB64 = null;
+      if (isOverwrite) freshList[currentSavedIdx] = entry;
+      else freshList[0] = entry;
+      try { savedWrite(freshList); } catch(e2) { alert('Could not save — storage full.'); return; }
+    }
+    savedRender();
+    const btn = document.getElementById('mrSaveMelodyBtn');
+    btn.textContent = '✓ saved!';
+    btn.classList.add('saved');
+    setTimeout(() => { btn.textContent = '✦ save'; btn.classList.remove('saved'); }, 2000);
+  };
+
+  if (isOverwrite) {
+    doSave(list[currentSavedIdx].name);
+  } else {
+    savedShowModal('My Recording', doSave);
+  }
+}
+
+document.getElementById('mrSaveMelodyBtn').addEventListener('click', savedSaveFromMicReview);
 
 document.getElementById('saveMelodyBtn').addEventListener('click', savedSaveFromResults);
 

@@ -4,6 +4,68 @@
                playback.js, note-builder.js
 ─────────────────────────────────────────────── */
 
+// ── Snap pitches to nearest in-scale note ──
+function snapPitchesToScale(pitches, root, profile) {
+  return pitches.map(p => {
+    const pc = p.midi % 12;
+    if (profile[pc] === 1) return { ...p }; // already in scale
+    for (let delta = 1; delta <= 6; delta++) {
+      const pcUp   = (pc + delta) % 12;
+      const pcDown = ((pc - delta) % 12 + 12) % 12;
+      if (profile[pcUp]   === 1) return { ...p, midi: p.midi + delta, pc: pcUp };
+      if (profile[pcDown] === 1) return { ...p, midi: p.midi - delta, pc: pcDown };
+    }
+    return { ...p };
+  });
+}
+
+// ── Play a pitch array as a simple melody (sequential notes) ──
+async function playMelodyNotes(pitches, btnEl, bpm) {
+  const isPlaying = btnEl.dataset.playing === '1';
+
+  stopPlayback(); // increments playGeneration
+  if (isPlaying) return; // was playing → just stop
+
+  const myGen = playGeneration; // capture AFTER stopPlayback
+
+  await Tone.start();
+  const { sampler } = await loadMelodySampler(melodyInstrument);
+  if (playGeneration !== myGen) return;
+
+  btnEl.dataset.playing = '1';
+  btnEl.textContent = '■ stop melody';
+
+  const secPerBeat = 60 / (bpm || 100);
+
+  if (pitches[0] && pitches[0].beat !== undefined) {
+    // Beat-positioned notes (builder / mic-review path)
+    pitches.forEach(p => {
+      const delaySec = (p.beat || 0) * secPerBeat;
+      const dur = (p.dur || 0.5) * secPerBeat * 0.88;
+      setTimeout(() => {
+        if (playGeneration !== myGen) return;
+        sampler.triggerAttackRelease(Tone.Frequency(p.midi, 'midi').toNote(), dur, Tone.now() + 0.01);
+      }, delaySec * 1000);
+    });
+    const totalSec = Math.max(...pitches.map(p => ((p.beat || 0) + (p.dur || 0.5)) * secPerBeat));
+    setTimeout(() => {
+      if (playGeneration === myGen) { btnEl.dataset.playing = '0'; btnEl.textContent = '▶ melody'; }
+    }, totalSec * 1000 + 300);
+  } else {
+    // Sequential fallback (legacy detectedPitches with only time/dur)
+    const noteDurSec = 0.4;
+    pitches.forEach((p, i) => {
+      setTimeout(() => {
+        if (playGeneration !== myGen) return;
+        sampler.triggerAttackRelease(Tone.Frequency(p.midi, 'midi').toNote(), noteDurSec * 0.85, Tone.now() + 0.01);
+      }, i * noteDurSec * 1000);
+    });
+    setTimeout(() => {
+      if (playGeneration === myGen) { btnEl.dataset.playing = '0'; btnEl.textContent = '▶ melody'; }
+    }, pitches.length * noteDurSec * 1000 + 300);
+  }
+}
+
 function buildResults() {
   if (detectedPitches.length < 4) {
     alert('Not enough notes detected — try humming for a bit longer!');
@@ -13,7 +75,7 @@ function buildResults() {
 
   const pcs = detectedPitches.map(p => p.pc);
   const ranked = rankScales(pcs);
-  const top5 = ranked; // show all 15 scales
+  const top5 = ranked;
   const best = top5[0];
   const maxScore = best.score || 1;
 
@@ -23,44 +85,15 @@ function buildResults() {
   document.getElementById('resultsSub').textContent =
     `${detectedPitches.length} notes detected · ${uniquePcs.length} unique pitch classes`;
 
-  // Detected bar
+  // Detected bar — play original melody button
   const detectedBar = document.getElementById('detectedBar');
   detectedBar.innerHTML =
     `<span class="detected-label">detected</span>` +
     uniquePcs.map(pc => `<span class="det-note">${pcToName(pc)}</span>`).join('') +
     `<button class="play-melody-btn" id="playMelodyBtn" style="margin-left:auto">▶ melody</button>`;
 
-  detectedBar.querySelector('#playMelodyBtn').addEventListener('click', async () => {
-    const btn = document.getElementById('playMelodyBtn');
-    if (btn.dataset.playing === '1') {
-      btn.dataset.playing = '0';
-      btn.textContent = '▶ melody';
-      playGeneration++;
-      return;
-    }
-    stopPlayback();
-    await Tone.start();
-    const { sampler: s } = await loadMelodySampler(melodyInstrument);
-    btn.dataset.playing = '1';
-    btn.textContent = '■ stop';
-
-    const noteDurSec = 0.4;
-    const now = Tone.now() + 0.05;
-    const gen = playGeneration;
-    detectedPitches.forEach((p, i) => {
-      const delay = i * noteDurSec * 1000;
-      setTimeout(() => {
-        if (playGeneration !== gen) return;
-        s.triggerAttackRelease(Tone.Frequency(p.midi, 'midi').toNote(), noteDurSec * 0.85, Tone.now() + 0.01);
-      }, delay);
-    });
-
-    setTimeout(() => {
-      if (playGeneration === gen) {
-        btn.dataset.playing = '0';
-        btn.textContent = '▶ melody';
-      }
-    }, detectedPitches.length * noteDurSec * 1000 + 500);
+  detectedBar.querySelector('#playMelodyBtn').addEventListener('click', async function() {
+    await playMelodyNotes(detectedPitches, this, _lastResults.bpm || 100);
   });
 
   // Cards
@@ -73,12 +106,11 @@ function buildResults() {
     const isTop = idx === 0;
 
     const barResult = buildBarChords(detectedPitches, scale.profile, root, pitchSource === 'builder' ? nbBpm : null, scale.key);
-    const bars              = barResult ? barResult.bars             : null;
-    const bpm               = barResult ? barResult.bpm              : 100;
+    const bars               = barResult ? barResult.bars              : null;
+    const bpm                = barResult ? barResult.bpm               : 100;
     const firstNoteSecOffset = barResult ? (barResult.firstNoteSecOffset || 0) : 0;
 
-    const chordLabel = (root, quality) =>
-      pcToName(root) + (CHORD_SUFFIXES[quality] ?? '');
+    const chordLabel = (r, quality) => pcToName(r) + (CHORD_SUFFIXES[quality] ?? '');
 
     const makeChipsHTML = (barArr, chipClass) => barArr.map((bar, i) => {
       const sep = i > 0 ? `<span class="chord-sep">›</span>` : '';
@@ -136,20 +168,65 @@ function buildResults() {
 
       <p class="card-desc">${scale.desc}</p>
 
-      <div class="card-actions" style="display:flex; align-items:center;">
+      <div class="card-actions" style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
         <button class="play-btn" data-idx="${idx}" style="background:${scale.color}">▶  play</button>
-        <button class="edit-btn" data-idx="${idx}" style="margin-left: 10px; font-family:'Space Mono', monospace; font-size:11px; padding: 5px 14px; border-radius:4px; background:transparent; border:1px solid ${scale.color}55; color:var(--text2); cursor:pointer;">✎ edit &amp; export</button>
-        <span class="roman-label" style="margin-left:auto; font-family:'Space Mono', monospace; font-size:11px; color:var(--text3);">${bpmLabel}</span>
+        <button class="card-play-melody-btn" data-playing="0" style="font-family:'Space Mono',monospace;font-size:11px;padding:5px 12px;border-radius:4px;background:transparent;border:1px solid ${scale.color}55;color:${scale.color};cursor:pointer;">▶ melody</button>
+        <button class="card-snap-btn" style="font-family:'Space Mono',monospace;font-size:11px;padding:5px 12px;border-radius:4px;background:transparent;border:1px solid ${scale.color}55;color:var(--text2);cursor:pointer;" title="Snap detected melody to ${pcToName(root)} ${scale.name} scale — click again to revert">⟼ snap melody</button>
+        <button class="edit-btn" data-idx="${idx}" style="font-family:'Space Mono',monospace;font-size:11px;padding:5px 14px;border-radius:4px;background:transparent;border:1px solid ${scale.color}55;color:var(--text2);cursor:pointer;">✎ edit &amp; export</button>
+        <span class="roman-label" style="margin-left:auto;font-family:'Space Mono',monospace;font-size:11px;color:var(--text3);">${bpmLabel}</span>
       </div>
 
       ${altProgsHTML}
     `;
 
+    // Per-card snap state
+    const snapState = {
+      snapped: false,
+      original: detectedPitches.map(p => ({ ...p })),
+      snappedNotes: snapPitchesToScale(detectedPitches, root, scale.profile),
+    };
+
+    // Current notes accessor — returns snapped or original depending on state
+    const currentNotes = () => snapState.snapped ? snapState.snappedNotes : snapState.original;
+
+    // ── Play chord suggestion ──
     card.querySelector('.play-btn').addEventListener('click', async e => {
-      const btn = e.currentTarget;
-      await playSuggestion(result, detectedPitches, bars, bpm, firstNoteSecOffset, btn, idx);
+      await playSuggestion(result, currentNotes(), bars, bpm, firstNoteSecOffset, e.currentTarget, idx);
     });
 
+    // ── Play melody only ──
+    const melodyBtn = card.querySelector('.card-play-melody-btn');
+    melodyBtn.addEventListener('click', async () => {
+      await playMelodyNotes(currentNotes(), melodyBtn, bpm);
+    });
+
+    // ── Snap melody toggle ──
+    const snapBtn = card.querySelector('.card-snap-btn');
+    snapBtn.addEventListener('click', () => {
+      snapState.snapped = !snapState.snapped;
+      snapBtn.textContent = snapState.snapped ? '↩ revert melody' : '⟼ snap melody';
+      snapBtn.style.color = snapState.snapped ? scale.color : 'var(--text2)';
+      snapBtn.title = snapState.snapped
+        ? `Revert melody back to original detected notes`
+        : `Snap detected melody to ${pcToName(root)} ${scale.name} scale — click again to revert`;
+      // If chord playback is running for this card, restart with new notes
+      if (playingIdx === idx) {
+        stopPlayback();
+      }
+    });
+
+    // ── Edit & export (opens editor screen, unchanged) ──
+    const editBtn = card.querySelector('.edit-btn');
+    if (editBtn) {
+      editBtn.addEventListener('click', () => {
+        stopPlayback();
+        if (typeof openEditor === 'function') {
+          openEditor(bars, currentNotes(), bpm, result);
+        }
+      });
+    }
+
+    // ── Alt progressions ──
     card.querySelectorAll('.alt-play-btn').forEach(btn => {
       const altIdx = parseInt(btn.dataset.alt);
       const altBars = altProgs[altIdx].altBars;
@@ -157,19 +234,9 @@ function buildResults() {
       btn.addEventListener('click', async () => {
         if (playingIdx === altPlayIdx) { stopPlayback(); return; }
         card.querySelectorAll('.alt-play-btn').forEach(b => { b.classList.remove('playing'); b.textContent = '▶'; });
-        await playSuggestion(result, detectedPitches, altBars, bpm, firstNoteSecOffset, btn, altPlayIdx);
+        await playSuggestion(result, currentNotes(), altBars, bpm, firstNoteSecOffset, btn, altPlayIdx);
       });
     });
-
-    const editBtn = card.querySelector('.edit-btn');
-    if (editBtn) {
-      editBtn.addEventListener('click', () => {
-        stopPlayback();
-        if (typeof openEditor === 'function') {
-          openEditor(bars, detectedPitches, bpm, result);
-        }
-      });
-    }
 
     container.appendChild(card);
   });

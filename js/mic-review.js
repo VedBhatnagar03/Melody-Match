@@ -527,6 +527,26 @@ function mrAutoTuneSequence() {
   mrUpdateUI();
 }
 
+// ── Snap all notes to nearest in-scale pitch ──
+function mrSnapToScale(root, profile) {
+  if (mrSequence.length === 0) return;
+  mrPushUndo();
+  mrSequence.forEach(n => {
+    const pc = n.midi % 12;
+    if (profile[pc] === 1) return; // already in scale — leave it
+
+    // Search outward ±1, ±2 ... semitones for nearest in-scale note
+    for (let delta = 1; delta <= 6; delta++) {
+      const pcUp   = (pc + delta) % 12;
+      const pcDown = ((pc - delta) % 12 + 12) % 12;
+      if (profile[pcUp] === 1) { n.midi += delta; n.pc = n.midi % 12; return; }
+      if (profile[pcDown] === 1) { n.midi -= delta; n.pc = n.midi % 12; return; }
+    }
+  });
+  mrUpdateUI();
+  mrDrawRoll();
+}
+
 // ── Add another take ──
 let mrAddingTake = false;
 
@@ -715,6 +735,63 @@ function mrOnMouseUp(e) {
 function mrOnTouchStart(e) { e.preventDefault(); mrOnMouseDown(e.touches[0]); }
 function mrOnTouchMove(e)  { e.preventDefault(); mrOnMouseMove(e.touches[0]); }
 function mrOnTouchEnd(e)   { e.preventDefault(); mrOnMouseUp(e.changedTouches[0]); }
+
+// ── Add a note at the current playhead (or end) via the keyboard panel ──
+function mrAddNoteByMidi(midi) {
+  const insertBeat = mrPlayhead >= 0
+    ? mrSnapBeat(mrPlayhead)
+    : (mrSequence.length > 0 ? Math.max(...mrSequence.map(n => n.beat + n.dur)) : 0);
+  const dur = 0.5;
+  mrSequence.push({ midi, pc: midi % 12, beat: insertBeat, dur, conf: 1 });
+  mrBars = Math.max(mrBars, Math.ceil((insertBeat + dur) / 4));
+  mrUpdateUI();
+  mrDrawRoll();
+}
+
+// ── Build the keyboard panel inside mic-review ──
+function buildMrKeyboard() {
+  const kb = document.getElementById('mrKeyboard');
+  if (!kb) return;
+  kb.innerHTML = '';
+  let whiteIdx = 0;
+  for (let oct = NB_KB_LOW; oct <= NB_KB_HIGH; oct++) {
+    const octStart = whiteIdx;
+    NB_WHITES.forEach(k => {
+      const midi = (oct + 1) * 12 + k.semi;
+      const key = document.createElement('div');
+      key.className = 'nb-key white' + (k.semi === 0 ? ' octave-c' : '');
+      key.dataset.midi = midi;
+      const noteName = k.semi === 0 ? `C${oct}` : k.name;
+      key.innerHTML = `<span class="key-note">${noteName}</span>`;
+      kb.appendChild(key);
+      whiteIdx++;
+    });
+    NB_BLACKS.forEach(k => {
+      const midi = (oct + 1) * 12 + k.semi;
+      const key = document.createElement('div');
+      key.className = 'nb-key black';
+      key.dataset.midi = midi;
+      const leftPx = (octStart + k.after) * WHITE_SLOT + WHITE_W - Math.floor(BLACK_W / 2);
+      key.style.left = leftPx + 'px';
+      key.innerHTML = `<span class="key-note">${k.name}</span>`;
+      kb.appendChild(key);
+    });
+  }
+  kb.style.width = (whiteIdx * WHITE_SLOT) + 'px';
+
+  kb.addEventListener('click', e => {
+    const key = e.target.closest('.nb-key');
+    if (!key || !key.dataset.midi) return;
+    const midi = +key.dataset.midi;
+    mrPushUndo();
+    mrAddNoteByMidi(midi);
+    // Play the note via notebuilder's play function if available
+    if (typeof nbPlayNote === 'function') nbPlayNote(midi);
+    // Flash key
+    key.classList.add('lit');
+    setTimeout(() => key.classList.remove('lit'), 180);
+  });
+}
 
 function mrInitRoll() {
   mrCanvas = document.getElementById('mrRollCanvas');

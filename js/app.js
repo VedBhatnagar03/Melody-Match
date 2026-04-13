@@ -119,6 +119,8 @@ document.getElementById('mrBackBtn').addEventListener('click', () => {
   detectedPitches = [];
   mrWaveformData = null;
   if (mrRawAudioElement) { cancelAnimationFrame(mrRawAnimId); mrRawAnimId = null; mrRawAudioElement.pause(); mrRawAudioElement = null; }
+  const kbWrap = document.getElementById('mrKeyboardWrap');
+  if (kbWrap) kbWrap.style.display = 'none';
   showScreen('idle');
 });
 
@@ -165,6 +167,7 @@ document.getElementById('mrMetronomeBtn').addEventListener('click', () => {
 document.getElementById('mrAutoTuneBtn').addEventListener('click', () => {
   if (typeof mrAutoTuneSequence !== 'undefined') mrAutoTuneSequence();
 });
+
 
 let mrRawAudioElement = null;
 let mrRawAnimId = null;
@@ -257,13 +260,15 @@ document.getElementById('mrPlayWithRawBtn').addEventListener('click', async () =
   btn.textContent = '⟳ loading...';
 
   // Load BOTH the raw audio metadata AND the melody sampler before starting either
-  let rawEl;
+  let rawEl, preloadedSampler;
   try {
-    [rawEl] = await Promise.all([
+    let melHandle;
+    [rawEl, , melHandle] = await Promise.all([
       mrCreateRawAudio(),
       Tone.start(),
       loadMelodySampler(melodyInstrument),
     ]);
+    preloadedSampler = melHandle.sampler;
   } catch(e) {
     btn.textContent = '🎤+♪ notes over raw';
     return;
@@ -301,15 +306,19 @@ document.getElementById('mrPlayWithRawBtn').addEventListener('click', async () =
   // We skip it here and instead drive the playhead purely from raw audio currentTime
   // so the scrubber stays locked to the audio.
   mrStartRawAnim(rawEl);
-  mrStartPlaybackFrom(startBeat);
+  mrStartPlaybackFrom(startBeat, preloadedSampler);
 });
 
-async function mrStartPlaybackFrom(startBeat) {
+async function mrStartPlaybackFrom(startBeat, preloadedSampler = null) {
   if (mrSequence.length === 0) return;
   stopPlayback();
 
-  await Tone.start();
-  const { sampler: mel } = await loadMelodySampler(melodyInstrument);
+  if (!preloadedSampler) {
+    await Tone.start();
+    const { sampler } = await loadMelodySampler(melodyInstrument);
+    preloadedSampler = sampler;
+  }
+  const mel = preloadedSampler;
   const secPerBeat = 60 / mrBpm;
   const now = Tone.now() + 0.05;
   const gen = ++playGeneration;
@@ -512,6 +521,14 @@ document.getElementById('melodyToggle').addEventListener('click', () => {
   btn.classList.toggle('active', melodyEnabled);
   btn.textContent = melodyEnabled ? '♪ melody on' : '♪ melody off';
   stopPlayback();
+});
+
+document.getElementById('mrKeyboardWrap')?.addEventListener('click', e => {
+  const btn = e.target.closest('[data-mr-inst]');
+  if (!btn) return;
+  setMelodyInstrument(btn.dataset.mrInst);
+  document.querySelectorAll('#mrKeyboardWrap [data-mr-inst]').forEach(b =>
+    b.classList.toggle('active', b.dataset.mrInst === btn.dataset.mrInst));
 });
 
 document.getElementById('instrumentBar-melody')?.addEventListener('click', e => {
@@ -887,36 +904,44 @@ document.getElementById('saveMelodyBtn').addEventListener('click', savedSaveFrom
 
 document.getElementById('editMelodyBtn').addEventListener('click', () => {
   stopPlayback();
-  // Load current melody into notebuilder
-  // Use mrSequence if available (mic-review path), else fall back to detectedPitches
-  let src, srcBpm, srcBars;
-  if (pitchSource === 'builder') {
-    src = nbSequence; srcBpm = nbBpm; srcBars = nbBars;
-  } else if (mrSequence && mrSequence.length > 0) {
-    src = mrSequence; srcBpm = mrBpm; srcBars = mrBars;
-  } else if (detectedPitches && detectedPitches.length > 0) {
-    // Convert raw pitches to sequence format
-    const bpm = _lastResults.bpm || 100;
-    const spb = 60 / bpm;
-    src = detectedPitches.map(p => ({
-      midi: p.midi, pc: p.pc, freq: p.freq,
-      beat: p.beat ?? ((p.time || 0) / 1000 / spb),
-      dur:  p.dur  ?? 1,
-    }));
-    srcBpm  = bpm;
-    srcBars = (_lastResults.bars && _lastResults.bars.length > 0) ? _lastResults.bars.length : 4;
+
+  // Load current notes into mic-review
+  const bpm = (mrSequence && mrSequence.length > 0) ? mrBpm : (_lastResults.bpm || 100);
+  let pitches = (mrSequence && mrSequence.length > 0) ? mrSequence : detectedPitches;
+  if (!pitches || pitches.length === 0) return;
+
+  const spb = 60 / bpm;
+  const seq = pitches.map(p => ({
+    midi: p.midi,
+    pc:   p.pc ?? (p.midi % 12),
+    beat: p.beat ?? ((p.time || 0) / 1000 / spb),
+    dur:  p.dur  ?? 0.5,
+    conf: p.conf ?? 1,
+  }));
+  const maxBeat = seq.length > 0 ? Math.max(...seq.map(n => n.beat + n.dur)) : 4;
+  mrSequence = seq;
+  mrBpm      = bpm;
+  mrBars     = Math.max(2, Math.min(8, Math.ceil(maxBeat / 4)));
+  mrUndoStack = []; mrRedoStack = [];
+  if (mrTakes.length === 0) {
+    mrTakes = [{ notes: seq.map(n => ({ ...n })), bpm: mrBpm, label: 'Edited' }];
+    mrActiveTake = 0;
+  }
+  mrUpdateUI();
+  mrRenderTakes();
+  mrDrawRoll();
+
+  const sub = document.getElementById('mrSub');
+  if (sub) sub.textContent = `${seq.length} notes · ${mrBpm} BPM · editing`;
+
+  // Show the piano keyboard panel on this screen
+  const kbWrap = document.getElementById('mrKeyboardWrap');
+  if (kbWrap) {
+    kbWrap.style.display = '';
+    if (typeof buildMrKeyboard === 'function') buildMrKeyboard();
   }
 
-  if (src && src.length > 0) {
-    nbSequence = src.map(n => ({ ...n }));
-    nbBpm  = srcBpm  || 100;
-    nbBars = srcBars || 4;
-    document.getElementById('nbBpmLabel').textContent  = nbBpm;
-    document.getElementById('nbBarsLabel').textContent = nbBars;
-    nbUpdateUI();
-    nbDrawRoll();
-  }
-  showScreen('notebuilder');
+  showScreen('mic-review');
 });
 
 // Undo/redo buttons for notebuilder
@@ -1003,6 +1028,8 @@ buildResults = function() {
       _lastResults.bpm       = r.bpm;
       _lastResults.bars      = r.bars;
       _lastResults.scaleName = `${pcToName(best.root)} ${best.scale.name}`;
+      _lastResults.scaleRoot    = best.root;
+      _lastResults.scaleProfile = best.scale.profile;
     }
   } catch(e) {}
 };

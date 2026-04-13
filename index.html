@@ -202,6 +202,21 @@
           <p class="mr-roll-hint">Drag notes left/right to reposition · Drag up/down to change pitch · Drag right edge to resize · Click to select · Backspace to delete</p>
         </div>
 
+        <!-- Piano keyboard — shown only when accessed from "edit notes" on results -->
+        <div class="nb-keyboard-wrap" id="mrKeyboardWrap" style="display:none;">
+          <div class="nb-keyboard-scroll">
+            <div class="nb-keyboard" id="mrKeyboard"></div>
+          </div>
+          <div class="nb-octave-row">
+            <span class="detected-label">instrument</span>
+            <button class="inst-btn active" data-mr-inst="piano">Piano</button>
+            <button class="inst-btn" data-mr-inst="guitar">Guitar</button>
+            <button class="inst-btn" data-mr-inst="strings">Strings</button>
+            <button class="inst-btn" data-mr-inst="bass">Bass</button>
+            <button class="inst-btn" data-mr-inst="flute">Flute</button>
+          </div>
+        </div>
+
         <div class="mr-bottom-row" style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
           <button class="nb-play-seq-btn" id="mrPlayBtn" disabled>▶  play sequence</button>
           <button class="nb-play-seq-btn" id="mrMetronomeBtn" title="Toggle metronome" style="border-color:#fbbf24; color:#fbbf24;">♩ metronome</button>
@@ -244,7 +259,7 @@
           </div>
           <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
             <button class="save-melody-btn" id="saveMelodyBtn">✦ save melody</button>
-            <button class="re-record-btn" id="editMelodyBtn">✎ edit melody</button>
+            <button class="re-record-btn" id="editMelodyBtn">✎ edit notes</button>
             <button class="re-record-btn" id="reRecordBtn">↩ record again</button>
           </div>
         </div>

@@ -33,7 +33,7 @@ async function playMelodyNotes(pitches, btnEl, bpm) {
   if (playGeneration !== myGen) return;
 
   btnEl.dataset.playing = '1';
-  btnEl.textContent = '■ stop melody';
+  btnEl.textContent = '❚❚ pause melody';
 
   const secPerBeat = 60 / (bpm || 100);
 
@@ -169,7 +169,15 @@ function buildResults() {
       <p class="card-desc">${scale.desc}</p>
 
       <div class="card-actions" style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
-        <button class="play-btn" data-idx="${idx}" style="background:${scale.color}">▶  play</button>
+        <div class="play-split" style="--card-color:${scale.color}">
+          <button class="play-btn play-split-main" data-idx="${idx}" style="background:${scale.color}">▶  play</button>
+          <button class="play-split-arrow" style="background:${scale.color}" title="More playback options">▾</button>
+          <div class="play-split-menu">
+            <button class="psm-item psm-chords">▶  chords only</button>
+            <button class="psm-item psm-raw">🎤  chords + raw audio</button>
+            <button class="psm-item psm-raw-notes">🎤+♪  chords + raw + melody</button>
+          </div>
+        </div>
         <button class="card-play-melody-btn" data-playing="0" style="font-family:'Space Mono',monospace;font-size:11px;padding:5px 12px;border-radius:4px;background:transparent;border:1px solid ${scale.color}55;color:${scale.color};cursor:pointer;">▶ melody</button>
         <button class="card-snap-btn" style="font-family:'Space Mono',monospace;font-size:11px;padding:5px 12px;border-radius:4px;background:transparent;border:1px solid ${scale.color}55;color:var(--text2);cursor:pointer;" title="Snap detected melody to ${pcToName(root)} ${scale.name} scale — click again to revert">⟼ snap melody</button>
         <button class="edit-btn" data-idx="${idx}" style="font-family:'Space Mono',monospace;font-size:11px;padding:5px 14px;border-radius:4px;background:transparent;border:1px solid ${scale.color}55;color:var(--text2);cursor:pointer;">✎ edit &amp; export</button>
@@ -189,12 +197,32 @@ function buildResults() {
     // Current notes accessor — returns snapped or original depending on state
     const currentNotes = () => snapState.snapped ? snapState.snappedNotes : snapState.original;
 
-    // ── Play chord suggestion ──
-    card.querySelector('.play-btn').addEventListener('click', async e => {
-      await playSuggestion(result, currentNotes(), bars, bpm, firstNoteSecOffset, e.currentTarget, idx);
-    });
+    // ── Split play button ──
+    const splitMain  = card.querySelector('.play-split-main');
+    const splitArrow = card.querySelector('.play-split-arrow');
+    const splitMenu  = card.querySelector('.play-split-menu');
 
-    // ── Play melody only ──
+    // Dropdown open/close
+    splitArrow.addEventListener('click', e => {
+      e.stopPropagation();
+      const isOpen = splitMenu.classList.contains('open');
+      document.querySelectorAll('.play-split-menu.open').forEach(m => m.classList.remove('open'));
+      if (!isOpen) splitMenu.classList.add('open');
+    });
+    document.addEventListener('click', () => splitMenu.classList.remove('open'));
+
+    // All three modes funnel through playSuggestion — chords always play underneath
+    const doPlay = (mode) => {
+      splitMenu.classList.remove('open');
+      playSuggestion(result, currentNotes(), bars, bpm, firstNoteSecOffset, splitMain, idx, mode);
+    };
+
+    splitMain.addEventListener('click', () => doPlay('chords'));
+    card.querySelector('.psm-chords').addEventListener('click',    () => doPlay('chords'));
+    card.querySelector('.psm-raw').addEventListener('click',       () => doPlay('raw'));
+    card.querySelector('.psm-raw-notes').addEventListener('click', () => doPlay('raw+notes'));
+
+    // ── Melody-only button (separate, no chords) ──
     const melodyBtn = card.querySelector('.card-play-melody-btn');
     melodyBtn.addEventListener('click', async () => {
       await playMelodyNotes(currentNotes(), melodyBtn, bpm);
@@ -209,10 +237,7 @@ function buildResults() {
       snapBtn.title = snapState.snapped
         ? `Revert melody back to original detected notes`
         : `Snap detected melody to ${pcToName(root)} ${scale.name} scale — click again to revert`;
-      // If chord playback is running for this card, restart with new notes
-      if (playingIdx === idx) {
-        stopPlayback();
-      }
+      if (playingIdx === idx) stopPlayback();
     });
 
     // ── Edit & export (opens editor screen, unchanged) ──

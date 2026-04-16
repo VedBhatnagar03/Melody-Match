@@ -5,6 +5,7 @@
 
 let activeSynths = [];
 let playingIdx = -1;
+let playingMode = 'chords'; // track current mode so switching modes restarts
 let playGeneration = 0;
 let melodyInstrument = 'piano';
 let chordInstrument = 'piano';
@@ -82,6 +83,7 @@ function stopPlayback() {
   activeSynths.forEach(s => { try { s.releaseAll ? s.releaseAll() : null; } catch(e){} });
   activeSynths = [];
   playingIdx = -1;
+  playingMode = 'chords';
   document.querySelectorAll('.play-btn').forEach(b => {
     b.classList.remove('playing');
     b.classList.remove('paused');
@@ -108,10 +110,16 @@ function togglePlayPause(btnEl, isAlt = false) {
   }
 }
 
-async function playSuggestion(result, detectedPitches, bars, bpm, firstNoteSecOffset, btnEl, idx) {
-  const isAlt = btnEl.classList.contains('alt-play-btn');
-  
-  if (playingIdx === idx) { 
+// mode: 'chords' | 'raw' | 'raw+notes'  (default: 'chords')
+async function playSuggestion(result, detectedPitches, bars, bpm, firstNoteSecOffset, btnEl, idx, mode = 'chords') {
+  const isAlt     = btnEl.classList.contains('alt-play-btn');
+  const playRaw   = mode === 'raw' || mode === 'raw+notes';
+  const playNotes = mode === 'raw+notes';  // melody on top of raw
+  const hasBlob   = typeof rawAudioBlob !== 'undefined' && rawAudioBlob != null;
+
+  // Same card, same mode → pause/resume toggle
+  // Same card, different mode → fall through and restart from scratch
+  if (playingIdx === idx && playingMode === mode) {
     if (Tone.Transport.state === 'started' || Tone.Transport.state === 'paused') {
       togglePlayPause(btnEl, isAlt);
       return;
@@ -122,31 +130,24 @@ async function playSuggestion(result, detectedPitches, bars, bpm, firstNoteSecOf
 
   await Tone.start();
   playingIdx = idx;
+  playingMode = mode;
   btnEl.classList.add('playing');
   btnEl.textContent = isAlt ? '...' : '⟳  loading...';
   btnEl.disabled = true;
 
   let chordHandle, melodyHandle, rawPlayer;
   try {
-    chordHandle  = await loadSampler(chordInstrument);
-    melodyHandle = await loadMelodySampler(melodyInstrument);
-    
-    if (typeof rawAudioBlob !== 'undefined' && rawAudioBlob && pitchSource === 'mic') {
-      const rawMicVol = document.getElementById('rawMicSlider') ? parseInt(document.getElementById('rawMicSlider').value) / 100 : 0.8;
-      if (rawMicVol > 0) {
-        await new Promise(resolve => {
-          rawPlayer = new Tone.Player({
-            url: URL.createObjectURL(rawAudioBlob),
-            onload: resolve,
-            onerror: resolve
-          }).toDestination();
+    const loads = [loadSampler(chordInstrument), loadMelodySampler(melodyInstrument)];
+    [chordHandle, melodyHandle] = await Promise.all(loads);
+
+    if (playRaw && hasBlob) {
+      await new Promise(resolve => {
+        rawPlayer = new Tone.Player({
+          url: URL.createObjectURL(rawAudioBlob),
+          onload: resolve,
+          onerror: () => { rawPlayer = null; resolve(); },
         });
-        if (rawPlayer.loaded) {
-          rawPlayer.volume.value = Tone.gainToDb(Math.max(0.01, rawMicVol * 0.7));
-        } else {
-          rawPlayer = null;
-        }
-      }
+      });
     }
   } catch(e) {
     btnEl.classList.remove('playing');
@@ -305,13 +306,22 @@ async function playSuggestion(result, detectedPitches, bars, bpm, firstNoteSecOf
     }
   }
 
-  // MELODY — all times in seconds from Transport start
-  if (melodyEnabled && detectedPitches.length > 0) {
+  // RAW AUDIO — scheduled via Tone.Transport so pause/resume works correctly
+  if (playRaw && rawPlayer && hasBlob) {
+    const rawMicVol = document.getElementById('rawMicSlider')
+      ? parseInt(document.getElementById('rawMicSlider').value) / 100 : 0.8;
+    rawPlayer.volume.value = Tone.gainToDb(Math.max(0.01, rawMicVol));
+    rawPlayer.connect(reverb);
+    Tone.Transport.schedule((time) => { rawPlayer.start(time, 0); }, '+0');
+  }
+
+  // MELODY — only for 'chords' mode (mixed in by default) or explicit 'raw+notes'
+  // Never scheduled for 'raw' mode (raw audio only)
+  const scheduleMelody = melodyEnabled && detectedPitches.length > 0 &&
+    (mode === 'chords' || mode === 'raw+notes');
+
+  if (scheduleMelody) {
     if (pitchSource === 'builder') {
-      // Notes have exact beat positions — convert beats → seconds.
-      // Add firstNoteSecOffset so the melody aligns with the chord bar grid
-      // (chords start at Transport 0 = bar 0 start, which is firstNoteSecOffset
-      // seconds before the first note when the first note falls mid-bar).
       detectedPitches.forEach(p => {
         const noteSec = p.beat * secPerBeat + (firstNoteSecOffset || 0);
         const dur = Math.min((p.dur ?? 1) * secPerBeat * 0.9, bars.length * barLen);
@@ -320,28 +330,14 @@ async function playSuggestion(result, detectedPitches, bars, bpm, firstNoteSecOf
         }, `+${Math.max(0, noteSec)}`);
       });
     } else {
-      // Mic path — notes have real timestamps; scale them to fill the total bar length.
-      const t0ms     = detectedPitches[0].time;
-      const lastNote = detectedPitches[detectedPitches.length - 1];
-      const spanMs   = Math.max(1, (lastNote.time + (lastNote.dur ?? 1) * secPerBeat * 1000) - t0ms);
-      const totalSec = bars.length * barLen;
-      const timeScale = totalSec / (spanMs / 1000);
-
-      // Play raw mic audio scaled to match
-      if (rawPlayer && rawPlayer.loaded) {
-        rawPlayer.playbackRate = 1 / timeScale;
-        rawPlayer.connect(reverb);
-        Tone.Transport.schedule((time) => {
-          rawPlayer.start(time, t0ms / 1000);
-        }, `+0`);
-      }
-
+      // Mic path — beat positions already set from mrPitchesToSequence
+      // Use beat positions directly (rawAudioBlob trimmed to beat 0, same timeline)
       detectedPitches.forEach(p => {
-        const relSec = ((p.time - t0ms) / 1000) * timeScale;
-        const dur    = Math.min((p.dur ?? 0.5) * secPerBeat * timeScale * 0.88, barLen * 0.95);
+        const noteSec = (p.beat ?? 0) * secPerBeat;
+        const dur = Math.min((p.dur ?? 0.5) * secPerBeat * 0.88, bars.length * barLen);
         Tone.Transport.schedule((time) => {
           melodyHandle.sampler.triggerAttackRelease(Tone.Frequency(p.midi, 'midi').toNote(), Math.max(0.05, dur), time);
-        }, `+${Math.max(0, relSec)}`);
+        }, `+${Math.max(0, noteSec)}`);
       });
     }
   }

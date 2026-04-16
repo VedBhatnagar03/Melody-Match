@@ -18,6 +18,46 @@ let recAnalyser = null;
 let recAudioCtx = null;
 
 let detectedPitches = []; // [{midi, pc, freq, time, dur}]
+
+// ── PCM AudioBuffer → WAV Blob ──
+// Lets us trim rawAudioBlob to start at the first note without losing the raw recording.
+function audioBufferToWavBlob(buffer) {
+  const numCh  = buffer.numberOfChannels;
+  const sr     = buffer.sampleRate;
+  const len    = buffer.length;
+  const bitsPS = 16;
+  const bytePS = bitsPS / 8;
+  const blockAlign = numCh * bytePS;
+  const dataSize   = len * blockAlign;
+  const wavBuf     = new ArrayBuffer(44 + dataSize);
+  const view       = new DataView(wavBuf);
+
+  const str = (off, s) => { for (let i = 0; i < s.length; i++) view.setUint8(off + i, s.charCodeAt(i)); };
+  str(0,  'RIFF');
+  view.setUint32(4,  36 + dataSize, true);
+  str(8,  'WAVE');
+  str(12, 'fmt ');
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1,  true); // PCM
+  view.setUint16(22, numCh, true);
+  view.setUint32(24, sr, true);
+  view.setUint32(28, sr * blockAlign, true);
+  view.setUint16(32, blockAlign, true);
+  view.setUint16(34, bitsPS, true);
+  str(36, 'data');
+  view.setUint32(40, dataSize, true);
+
+  // Interleave channels
+  let offset = 44;
+  for (let i = 0; i < len; i++) {
+    for (let ch = 0; ch < numCh; ch++) {
+      const s = Math.max(-1, Math.min(1, buffer.getChannelData(ch)[i]));
+      view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+      offset += 2;
+    }
+  }
+  return new Blob([wavBuf], { type: 'audio/wav' });
+}
 let pitchSource = 'mic';  // 'mic' | 'builder'
 let rawAudioBlob = null;
 let mrWaveformData = null; // Float32Array of RMS amplitudes, normalised 0-1, for roll overlay
@@ -287,6 +327,48 @@ async function analyseRecording() {
   if (detectedPitches.length === 0) {
     alert('No notes detected in the recording. Please try singing/humming more clearly, closer to the microphone.');
     return false;
+  }
+
+  // ── Trim rawAudioBlob to start at the first detected note ──
+  // This ensures rawAudioBlob currentTime=0 == beat 0 everywhere, no offset arithmetic needed.
+  try {
+    const firstNoteSec = detectedPitches[0].time / 1000; // absolute seconds in audioBuffer
+    if (firstNoteSec > 0.05) {
+      const sr = audioBuffer.sampleRate;
+      const startSample = Math.floor(firstNoteSec * sr);
+      const numSamples  = audioBuffer.length - startSample;
+      const trimCtx     = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: sr });
+      const trimmed     = trimCtx.createBuffer(audioBuffer.numberOfChannels, numSamples, sr);
+      for (let ch = 0; ch < audioBuffer.numberOfChannels; ch++) {
+        trimmed.copyToChannel(audioBuffer.getChannelData(ch).subarray(startSample), ch);
+      }
+      rawAudioBlob = audioBufferToWavBlob(trimmed);
+      trimCtx.close();
+
+      // Recompute waveform from trimmed audio
+      const monoTrimmed = trimmed.numberOfChannels > 1
+        ? (() => {
+            const L = trimmed.getChannelData(0), R = trimmed.getChannelData(1);
+            const m = new Float32Array(L.length);
+            for (let i = 0; i < L.length; i++) m[i] = (L[i] + R[i]) * 0.5;
+            return m;
+          })()
+        : trimmed.getChannelData(0);
+      const NUM_BUCKETS = 800;
+      const bucketSize  = Math.floor(monoTrimmed.length / NUM_BUCKETS);
+      const buckets     = new Float32Array(NUM_BUCKETS);
+      for (let b = 0; b < NUM_BUCKETS; b++) {
+        let sum = 0;
+        const s0 = b * bucketSize;
+        for (let s = 0; s < bucketSize; s++) sum += monoTrimmed[s0 + s] ** 2;
+        buckets[b] = Math.sqrt(sum / bucketSize);
+      }
+      const peak = Math.max(...buckets, 0.0001);
+      mrWaveformData = buckets.map(v => v / peak);
+    }
+  } catch(e) {
+    // Trim failed — rawAudioBlob stays as the full recording, offset will be slightly off
+    console.warn('MelodyMatch: raw audio trim failed', e);
   }
 
   setRecStep(`Detected ${detectedPitches.length} notes · building results...`);

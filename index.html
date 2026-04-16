@@ -11,12 +11,13 @@
 <body>
 <div id="app">
   <header class="topbar">
-    <div class="logo">
+    <div class="logo" id="logoHomeBtn" title="Go to home screen" style="cursor:pointer;">
       <div class="logo-glyph">M♪</div>
       <span class="logo-name">MelodyMatch</span>
       <span class="logo-tag">// scale detector</span>
     </div>
     <div class="topbar-right" id="statusBar">STANDBY</div>
+    <div id="versionBadge" class="version-badge" title="" style="display:none"></div>
   </header>
 
   <main>
@@ -113,6 +114,7 @@
           <div class="nb-btn-group">
             <button class="nb-play-seq-btn" id="nbPlaySeqBtn" disabled>▶ play</button>
             <button class="nb-play-seq-btn nb-metronome-btn" id="nbMetronomeBtn" title="Toggle metronome">♩</button>
+            <button class="nb-play-seq-btn" id="nbJumpEndBtn" title="Jump playhead to end">⊣</button>
           </div>
           <!-- Edit group -->
           <div class="nb-btn-group">
@@ -219,6 +221,7 @@
 
         <div class="mr-bottom-row" style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
           <button class="nb-play-seq-btn" id="mrPlayBtn" disabled>▶  play sequence</button>
+          <button class="nb-play-seq-btn" id="mrJumpEndBtn" title="Jump playhead to end">⊣ end</button>
           <button class="nb-play-seq-btn" id="mrMetronomeBtn" title="Toggle metronome" style="border-color:#fbbf24; color:#fbbf24;">♩ metronome</button>
           <button class="nb-play-seq-btn" id="mrPlayRawBtn" style="border-color:#ff8c42; color:#ff8c42;" title="Plays back your original recording — compare with detected notes above">🎤 raw audio</button>
           <button class="nb-play-seq-btn" id="mrPlayWithRawBtn" style="border-color:#ff8c42; color:#ff8c42;" title="Play your recording and the detected notes simultaneously to compare">🎤+♪ notes over raw</button>
@@ -308,18 +311,23 @@
       <div class="editor-screen" style="padding-top:44px;">
         <div class="results-top">
           <div>
-            <h2 class="results-title">Edit & Export</h2>
+            <h2 class="results-title">Edit &amp; Export</h2>
             <p class="results-sub">Adjust chords and melody timing</p>
           </div>
-          <div style="display:flex;gap:10px;align-items:center">
-            <button class="inst-btn" id="editorRefineBtn" style="border-color:#ff8c42; color:#ff8c42; white-space: nowrap;">✨ auto-refine</button>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <button class="inst-btn" id="edUndoBtn" title="Undo (Ctrl+Z)">↩</button>
+            <button class="inst-btn" id="edRedoBtn" title="Redo (Ctrl+Y)">↪</button>
+            <button class="inst-btn" id="edCopyChordBtn" title="Copy selected chord(s) (Ctrl+C)">⎘ copy</button>
+            <button class="inst-btn" id="edPasteChordBtn" title="Paste chord(s) (Ctrl+V)">⎘ paste</button>
+            <button class="inst-btn" id="editorRefineBtn" style="border-color:#ff8c42;color:#ff8c42;white-space:nowrap">✨ refine</button>
             <button class="re-record-btn" id="editorBackBtn">← back</button>
-            <button class="save-melody-btn" id="editorExportBtn">⤓ export audio</button>
+            <button class="save-melody-btn" id="editorSaveBtn">✦ save</button>
+            <button class="save-melody-btn" id="editorExportBtn">⤓ export</button>
           </div>
         </div>
-        
-        <div class="mr-roll-wrap" style="margin-bottom: 24px;">
-           <div class="mr-roll-header">
+
+        <div class="mr-roll-wrap" style="margin-bottom:16px;">
+          <div class="mr-roll-header">
             <span class="trail-label">timing &amp; position</span>
             <div class="mr-bpm-row">
               <span class="detected-label">bpm</span>
@@ -334,12 +342,28 @@
               <canvas id="edRollCanvas"></canvas>
             </div>
           </div>
-          <p class="mr-roll-hint">Drag notes up/down for pitch, left/right for timing. Drag chord blocks left/right.</p>
+          <div class="roll-resize-handle" id="edRollResizeHandle" title="Drag ↕ for row height · Drag ↔ for beat width">⠿</div>
+          <p class="mr-roll-hint">Drag notes · drag chord to move · drag ▲▼ stripe to shift key · drag right edge to resize · click chord to select · Ctrl+C/V to copy/paste · right-click for options</p>
         </div>
-        
-        <div class="mr-bottom-row">
-          <button class="nb-play-seq-btn" id="edPlayBtn">▶ play</button>
-          <span style="font-family:'Space Mono',monospace; font-size:11px; color:var(--text3); margin-left:20px;" id="edPlayStatus"></span>
+
+        <!-- Chord palette — scale degree chords to add -->
+        <div class="ed-chord-palette-wrap">
+          <span class="trail-label" style="margin-right:10px;flex-shrink:0">add chord</span>
+          <div id="edChordPalette" class="ed-chord-palette"></div>
+        </div>
+
+        <div class="mr-bottom-row" style="margin-top:14px;">
+          <div id="edPlaySplit" class="play-split" style="--card-color:#7c3aed">
+            <button class="play-btn play-split-main" id="edPlayBtn">▶ play</button>
+            <button class="play-split-arrow" id="edPlayArrow">▾</button>
+            <div class="play-split-menu" id="edPlayMenu">
+              <button class="psm-item" data-mode="chords">▶  chords + melody</button>
+              <button class="psm-item psm-raw" data-mode="raw">🎤  chords + raw audio</button>
+              <button class="psm-item psm-raw-notes" data-mode="raw+notes">🎤+♪  chords + raw + melody</button>
+              <div id="edPlayMenuNoAudio" style="display:none;padding:6px 12px;font-family:'Space Mono',monospace;font-size:10px;color:var(--text3)">no recording in this session</div>
+            </div>
+          </div>
+          <span style="font-family:'Space Mono',monospace;font-size:11px;color:var(--text3);margin-left:16px;" id="edPlayStatus"></span>
         </div>
       </div>
     </div>
@@ -362,7 +386,21 @@
   </div>
 </div>
 
+<!-- ── Storage full modal ── -->
+<div id="storageFullModal" class="save-modal-overlay" style="display:none">
+  <div class="save-modal storage-full-modal">
+    <h3 class="save-modal-title">⚠ Storage full</h3>
+    <p class="storage-full-desc">Your browser's local storage is full. Delete one or more saved melodies below to make room, then retry.</p>
+    <div id="storageFullList" class="storage-full-list"></div>
+    <div class="save-modal-btns">
+      <button class="save-modal-cancel" id="storageFullCancel">Cancel</button>
+      <button class="save-modal-confirm" id="storageFullRetry">↺ Retry save</button>
+    </div>
+  </div>
+</div>
+
 <!-- Scripts: load in dependency order -->
+<script src="js/version.js"></script>
 <script src="js/constants.js"></script>
 <script src="js/music.js"></script>
 <script src="js/audio.js"></script>

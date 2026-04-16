@@ -20,6 +20,7 @@ let mrPlayhead = -1;
 
 // Playhead scrub
 let mrScrubbing = false;
+let mrSeqPaused = false;
 
 // Metronome
 let mrMetronomeEnabled = false;
@@ -355,11 +356,10 @@ function mrHitNote(cx, cy) {
 
 // ── Canvas coordinate helper — accounts for scroll correctly ──
 function mrCanvasXY(e) {
-  const rect     = mrCanvas.getBoundingClientRect();
-  const scroller = document.getElementById('mrRollScroll');
+  const rect = mrCanvas.getBoundingClientRect();
   return {
-    x: (e.clientX - rect.left) + (scroller ? scroller.scrollLeft : 0),
-    y: (e.clientY - rect.top),
+    x: e.clientX - rect.left,
+    y: e.clientY - rect.top,
   };
 }
 

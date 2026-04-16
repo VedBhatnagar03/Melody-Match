@@ -8,6 +8,7 @@ let nbSequence = []; // {midi, pc, freq, beat, dur}
 let nbBpm   = 100;
 let nbBars  = 4;
 let nbSeqPlaying = false;
+let nbSeqPaused = false;
 
 // ── Grid constants (mutable for zoom) ──
 let NB_ROW_H   = 28;
@@ -235,19 +236,16 @@ function nbSnapBeat(beat) {
   return Math.max(0, Math.min(nbTotalBeats() - 1, Math.round(beat * 2) / 2));
 }
 
-// ── Add note at next free beat slot (by MIDI number) ──
+// ── Add note at playhead if visible, otherwise at end ──
 function nbAddNoteByMidi(midi) {
-  const pc   = midi % 12;
+  const insertBeat = nbPlayhead >= 0
+    ? nbSnapBeat(nbPlayhead)
+    : (nbSequence.length > 0 ? Math.max(...nbSequence.map(n => n.beat + (n.dur ?? 1))) : 0);
+  const dur = 1;
+  const pc = midi % 12;
   const freq = 440 * Math.pow(2, (midi - 69) / 12);
-
-  const usedBeats = nbSequence.map(n => n.beat);
-  let beat = 0;
-  if (usedBeats.length > 0) {
-    beat = nbSnapBeat(Math.max(...usedBeats) + 1);
-    if (beat >= nbTotalBeats()) beat = nbTotalBeats() - 1;
-  }
-
-  nbSequence.push({ midi, pc, freq, beat, dur: 1 });
+  nbSequence.push({ midi, pc, freq, beat: insertBeat, dur });
+  nbBars = Math.max(nbBars, Math.ceil((insertBeat + dur) / 4));
   nbUpdateUI();
   nbDrawRoll();
 
@@ -465,17 +463,24 @@ async function nbPlayNote(midi) {
   s.triggerAttackRelease(Tone.Frequency(midi, 'midi').toNote(), '8n', Tone.now() + 0.05);
 }
 
-function nbStopSequence() {
+function nbStopSequence(pause = false) {
   // Cancel all pending timeouts from the last play call
   nbTimeouts.forEach(id => clearTimeout(id));
   nbTimeouts = [];
   nbSeqPlaying = false;
-  // Park playhead at current position (or beat 0) so it stays visible and draggable
-  if (nbPlayhead < 0) nbPlayhead = 0;
-  if (typeof nbStartBeat !== 'undefined') nbStartBeat = nbPlayhead;
-  playGeneration++;
+  nbSeqPaused = pause;
+  playGeneration++; // animatePlayhead will see this and bail
+  if (pause) {
+    // Keep playhead exactly where it is (animatePlayhead may fire one more frame, so clamp)
+    if (nbPlayhead < 0) nbPlayhead = 0;
+    nbStartBeat = nbPlayhead;
+  } else {
+    // Full stop — hide playhead
+    nbPlayhead = -1;
+    if (typeof nbStartBeat !== 'undefined') nbStartBeat = 0;
+  }
   const btn = document.getElementById('nbPlaySeqBtn');
-  btn.textContent = '▶  play sequence';
+  btn.textContent = pause ? '▶  resume' : '▶  play sequence';
   btn.classList.remove('playing');
   nbDrawRoll();
 }
@@ -538,10 +543,17 @@ async function nbPlaySequence(startBeat = 0) {
   }
 
   function animatePlayhead() {
-    if (playGeneration !== gen) return; // stopped or restarted
+    if (playGeneration !== gen) {
+      // Stopped externally — only reset playhead if NOT paused
+      if (!nbSeqPaused) {
+        nbSeqPlaying = false;
+        nbPlayhead = -1;
+        nbDrawRoll();
+      }
+      return;
+    }
     const nbScreen = document.getElementById('screen-notebuilder');
     if (!nbScreen || !nbScreen.classList.contains('active')) {
-      // Screen hidden — stop cleanly without drawing
       nbSeqPlaying = false; return;
     }
     const elapsed = (performance.now() - t0) / 1000;
@@ -550,7 +562,7 @@ async function nbPlaySequence(startBeat = 0) {
     if (elapsed < totalSec - startSec + 0.5) requestAnimationFrame(animatePlayhead);
     else {
       nbSeqPlaying = false;
-      nbPlayhead = 0; // return to start after full playthrough
+      nbPlayhead = -1; // return to hidden after full playthrough
       if (typeof nbStartBeat !== 'undefined') nbStartBeat = 0;
       btn.textContent = '▶  play sequence';
       btn.classList.remove('playing');
@@ -685,9 +697,10 @@ document.getElementById('nbKeyboard').addEventListener('click', e => {
 });
 
 document.getElementById('nbPlaySeqBtn').addEventListener('click', () => {
-  if (nbSeqPlaying) { nbStopSequence(); return; }
-  // Start from the parked playhead position (set by scrubbing), or beat 0
-  const start = (typeof nbStartBeat !== 'undefined' && nbStartBeat > 0) ? nbStartBeat : 0;
+  if (nbSeqPlaying) { nbStopSequence(true); return; } // pause
+  nbSeqPaused = false;
+  // Start from the parked playhead position (set by scrubbing or pause), or beat 0
+  const start = (typeof nbStartBeat !== 'undefined' && nbStartBeat >= 0) ? nbStartBeat : 0;
   nbPlaySequence(start);
 });
 
@@ -751,4 +764,10 @@ document.getElementById('nbAnalyseBtn').addEventListener('click', () => {
 document.getElementById('nbBackBtn').addEventListener('click', () => {
   nbStopSequence(); // stop any active playback before leaving
   showScreen('idle');
+});
+
+document.getElementById('nbJumpEndBtn').addEventListener('click', () => {
+  nbPlayhead = nbSequence.length > 0 ? Math.max(...nbSequence.map(n => n.beat + (n.dur ?? 1))) : nbTotalBeats();
+  nbStartBeat = nbPlayhead;
+  nbDrawRoll();
 });

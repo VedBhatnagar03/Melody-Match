@@ -1,6 +1,6 @@
 # MelodyMatch — Bug & Feature Backlog
 
-> Last updated: 2026-04-14  
+> Last updated: 2026-04-16  
 > Working file: `index (9).html` + `js/` folder  
 > Live repo: https://github.com/VedBhatnagar03/Melody-Match
 
@@ -262,14 +262,16 @@ A bundle of micro-features that together make fixing detected notes much faster.
 
 ---
 
-**#50 — Improve chord editor after choosing a recommendation** 🟡 High impact  
-Currently `editor.js` only lets you drag chords horizontally (change beat offset). You cannot:  
-- Change a chord's root or quality (e.g. swap Cmaj → Cmin)  
-- Transpose a chord up/down  
-- Add or remove a chord from the bar  
-- Change a chord's duration  
-**Fix:** Add a click-to-select state on chord blocks in the editor canvas. Selected chord shows an overlay panel with: root picker (chromatic wheel or dropdown), quality picker (maj/min/dom7/maj7/min7/dim), transpose ±1 semitone, delete chord, duplicate chord. Wire to re-render and re-schedule playback.  
-**File:** `js/editor.js` — add chord selection state + overlay panel + HTML/CSS for panel.
+**#50 ✅ — Improve chord editor after choosing a recommendation** 🟡 High impact  
+Full editor implemented in `js/editor.js`:
+- Chords draggable horizontally (beat offset) and vertically (root/key, preserving quality)
+- Chord duration resizable by dragging right edge
+- Chord zone now a piano-roll-style lane: vertically positioned by root note (C=bottom, B=top) with 12 guide lines
+- Undo/redo (Ctrl+Z/Y), box-select melody notes, copy/paste chords (Ctrl+C/V), right-click context menu
+- Scale degree chord palette to add new chords from the detected scale
+- Raw audio + raw+melody play modes with pause/resume (Transport-aware)
+- Save from editor with overwrite-on-second-save; loads back into editor from saved list (✏️ badge)
+- Roll resize handle (same `makeRollResizable` as other rolls); sensitivity reduced (÷6/÷8 divisors)
 
 ---
 
@@ -332,6 +334,9 @@ The detected BPM is purely statistical (IOI median). Some scales have a strong c
 - **#52**: Raw audio button renamed `🎤 raw audio`; playhead now tracks raw audio `currentTime` via rAF; new `🎤+♪ notes over raw` button plays both in sync (sampler and raw audio loaded together before starting either to eliminate delay)
 - **#55**: Save from mic-review — `✦ save` button on mic-review toolbar; saves notes + raw audio blob (base64, ≤3MB); restores to mic-review on load with waveform; `🎤 recorded` / `🎹 built` badges on saved list
 - **Playhead scrub on notebuilder**: Red triangle handle on playhead, draggable while playing or paused; stays visible at beat 0 whenever notes exist
+- **#50**: Full chord editor — vertical root positioning (piano-roll lane), chord palette, undo/redo, copy/paste, right-click menu, raw audio playback with pause/resume, save/overwrite from editor, roll resize handle
+- **Raw audio fix (playback.js)**: `hasBlob` no longer requires `pitchSource === 'mic'`; `Tone.Player` double-connection fixed; raw audio now plays correctly from all saved sessions
+- **Roll resize sensitivity**: Divisors increased from `3`/`2` → `8`/`6` across all three rolls (builder, mic-review, editor)
 
 ---
 
@@ -348,7 +353,7 @@ The detected BPM is purely statistical (IOI median). Some scales have a strong c
 | **#49** | Note correction toolkit (context menu + snap-to-scale + grid selector) | 🔴 | #37 done; #38/40/42 still pending — fixes the hardest part of the whole app |
 | **#46** | MIDI export | 🔴 | Takes the result into any DAW — huge practical value, no workaround |
 | **#36** | Tap tempo | 🔴 | Wrong BPM = every note position wrong. Tap tempo unblocks the most common failure |
-| **#50** | Improve chord editor (change root/quality) | 🟡 | Currently chords are read-only after selection — can't tweak them at all |
+| ~~**#50**~~ | ~~Improve chord editor (root/quality/add/delete/save)~~ | ✅ | Done — full editor with vertical root positioning, palette, undo/redo, save, resize |
 | **#38** | Snap to scale button | 🟡 | One click fixes most pitch drift. Already have `_lastResults` |
 | **#33** | Octave outliers highlighted amber | 🟡 | #1 detection failure made visible instantly — tiny code change |
 | **#32** | Octave error auto-correction | 🟡 | Biggest source of wrong notes; upstream fix |
